@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.api.routes import router
 from app.api.risk import router as risk_router
+from app.api.predict import router as predict_router
 
 
 logging.basicConfig(
@@ -27,6 +28,7 @@ app.include_router(
     prefix="/api",
 )
 app.include_router(risk_router, prefix="/api")
+app.include_router(predict_router, prefix="/api")
 
 
 @app.get("/")

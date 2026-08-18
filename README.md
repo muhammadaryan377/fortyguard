@@ -189,6 +189,34 @@ Authoritative sources:
 
 Heat Index is a screening metric. OSHA notes that WBGT is more accurate for occupational heat assessment, and NIOSH recommends WBGT for REL/RAL assessment. HeatShield does **not** currently provide a WBGT measurement, NIOSH REL/RAL determination, medical diagnosis, legal compliance determination, predictive risk, or AI-agent decision. FortyGuard `wet_bulb_temperature_c` is ordinary wet-bulb temperature and is never interpreted as WBGT.
 
+## PREDICT Phase 1
+
+`POST /api/predict/heat-outlook` queries separate future FortyGuard TCM heatmaps for a small set of site-specific sample times up to 12 hours ahead. The default offsets are `+1`, `+3`, `+6`, `+9`, and `+12` hours. These are sparse forecast sample points, not a continuous hourly series.
+
+Phoenix example request:
+
+```json
+{
+  "location": {
+    "site_id": "PHX-SITE-01",
+    "name": "Phoenix Outdoor Construction Site",
+    "city": "Phoenix",
+    "state": "Arizona",
+    "country": "United States",
+    "latitude": 33.4484,
+    "longitude": -112.0740
+  },
+  "timezone_name": "America/Phoenix",
+  "offset_hours": [1, 3, 6, 9, 12]
+}
+```
+
+Each forecast temperature must come from a TCM GeoJSON tile that spatially contains the requested site. Missing points remain unavailable: HeatShield does not use nearest tiles, heatmap statistics, interpolation, or invented values. Partial provider success produces a partial outlook and retains every failed sample point with a safe reason.
+
+Phase 1 is temperature-only. It does not call Environmental Parameters as a temperature forecast, does not forecast Heat Index or humidity, and does not provide future WBGT, occupational risk scores, medical prediction, legal compliance classification, or AI-agent decisions. “Highest sampled temperature” means the highest value among requested sample times only; it is not guaranteed to be the maximum over the continuous forecast period.
+
+Automated prediction tests use mocked provider jobs and consume zero FortyGuard API credits.
+
 ## Tests
 
 Tests use mocked HTTP transports and do not consume FortyGuard credits:
