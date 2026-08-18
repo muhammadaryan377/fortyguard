@@ -125,16 +125,17 @@ async def test_plan_verify_recheck_persist_closed_loop(monkeypatch):
     monkeypatch.setattr("app.services.cycle_orchestrator.get_live_environment", fake_environment)
     monkeypatch.setattr("app.services.cycle_orchestrator.create_heat_outlook", fake_outlook)
     store = InMemoryHeatShieldStateStore()
-    model = FakeAgentModel([ModelToolCall("request_supervisor_review", "{}")])
+    model = FakeAgentModel([ModelToolCall("propose_cool_recovery", "{}"), ModelToolCall("request_supervisor_review", "{}")])
     orchestrator = CycleOrchestrator(store, agent_model=model, clock=lambda: NOW)
     cycle_request = HeatShieldCycleRequest(location=base.heat_outlook.location,
         worker=base.current_assessment.worker_context, task=base.current_assessment.task_context)
     planned = await orchestrator.plan(cycle_request)
     assert store.get_cycle(planned.cycle_id) and store.decisions
-    action_id = planned.agent_decision.actions[0].action_id
-    orchestrator.approve(planned.cycle_id, ApprovalRequest(supervisor_id="SUP", action_ids=[action_id]))
+    action_ids = [action.action_id for action in planned.agent_decision.actions]
+    orchestrator.approve(planned.cycle_id, ApprovalRequest(supervisor_id="SUP", action_ids=action_ids))
     verified = await orchestrator.verify(planned.cycle_id)
-    assert verified.status == "verified" and verified.verified_action_count == 1
+    assert verified.status == "partial" and verified.verified_action_count == 1
+    assert {item["status"] for item in verified.action_state_results} == {"internal_state_verified", "pending_requires_review"}
     assert verified.causality_disclaimer.startswith("Observed environmental changes")
     successor = await orchestrator.recheck(planned.cycle_id)
     assert successor.parent_cycle_id == planned.cycle_id

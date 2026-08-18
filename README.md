@@ -237,6 +237,7 @@ Operational endpoints:
 ```text
 POST /api/risk/assess-live
 POST /api/predict/heat-outlook
+POST /api/spatial/cooler-zones
 POST /api/agent/decide
 POST /api/cycle/plan
 POST /api/cycle/{cycle_id}/approve
@@ -246,6 +247,43 @@ GET  /api/cycle/{cycle_id}/audit
 ```
 
 DeepSeek is used only for constrained tool selection. Model prose and chain-of-thought are not used or returned. Missing current evidence skips the model, while a missing/unavailable DeepSeek service leaves completed SENSE, ASSESS, and PREDICT evidence intact. Automated tests mock both providers and consume no FortyGuard or DeepSeek credits.
+
+## SPATIAL INTELLIGENCE Phase 1
+
+`POST /api/spatial/cooler-zones` requests one current FortyGuard TCM heatmap over a wider deterministic worksite AOI. HeatShield keeps only valid polygon tiles with numeric `properties.value`, identifies the site-containing reference tile, and ranks strictly cooler tiles by temperature, straight-line distance, then provider feature order.
+
+```json
+{
+  "location": {
+    "site_id": "PHX-SITE-01",
+    "name": "Phoenix Outdoor Construction Site",
+    "city": "Phoenix",
+    "state": "Arizona",
+    "country": "United States",
+    "latitude": 33.4484,
+    "longitude": -112.074
+  },
+  "timezone_name": "America/Phoenix",
+  "search_radius_meters": 400,
+  "granularity": 60,
+  "max_candidates": 3
+}
+```
+
+The response contains sanitized polygon geometry for the future map, compact tile temperatures, the containing site reference, and deterministic cooler-zone candidates. It never uses a nearest tile as the site temperature, heatmap statistics as tile temperatures, or interpolation.
+
+**“Cooler” does not mean “safe.”** Temperature alone does not establish Heat Index, WBGT, radiant exposure, wind, accessibility, physical hazards, permissions, or task feasibility. Straight-line distance is not a walking or routing distance.
+
+Cycle planning can opt in using:
+
+```json
+{
+  "include_spatial_intelligence": true,
+  "spatial_search_radius_meters": 400
+}
+```
+
+The default is `false`, avoiding an additional provider request. When enabled, the constrained agent may select `propose_cooler_zone_candidate`; the server selects rank 1 and constructs all coordinates, temperatures, differences, and distance. After supervisor approval, ACT stores an internal `relocation_candidate` in `approved_candidate` state. This does not claim a worker moved, the area is safe, or relocation occurred. VERIFY confirms only the internal record state; physical location verification is outside Phase 1.
 
 Tests use mocked HTTP transports and do not consume FortyGuard credits:
 

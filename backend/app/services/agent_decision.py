@@ -23,6 +23,7 @@ TOOL_ACTION = {
     "propose_worker_monitoring": "increase_monitoring",
     "propose_limit_direct_sun": "limit_direct_sun",
     "request_supervisor_review": "supervisor_review",
+    "propose_cooler_zone_candidate": "consider_cooler_zone",
 }
 
 
@@ -48,7 +49,18 @@ def build_agent_evidence(request: AgentDecisionRequest) -> AgentEvidence:
         "unavailable_sample_offsets": [p.offset_hours for p in outlook.points if p.status == "unavailable"],
         **outlook.summary.model_dump(mode="json", exclude={"available_points", "total_points"}),
     }
-    return AgentEvidence(current=current, forecast=forecast)
+    spatial = None
+    if request.spatial_heat is not None:
+        spatial = {
+            "spatial_status": request.spatial_heat.status,
+            "site_temperature_c": request.spatial_heat.site_reference.site_temperature_c,
+            "top_candidates": [
+                {"candidate_id": c.candidate_id, "temperature_c": c.temperature_c,
+                 "cooler_by_c": c.cooler_by_c, "straight_line_distance_m": c.straight_line_distance_m}
+                for c in request.spatial_heat.candidates
+            ],
+        }
+    return AgentEvidence(current=current, forecast=forecast, spatial=spatial)
 
 
 def _supported(control_text: list[str], words: tuple[str, ...]) -> bool:
@@ -56,7 +68,7 @@ def _supported(control_text: list[str], words: tuple[str, ...]) -> bool:
     return any(word in text for word in words)
 
 
-def _eligibility(tool: str, evidence: AgentEvidence) -> tuple[bool, str, dict]:
+def _eligibility(tool: str, evidence: AgentEvidence, spatial_heat=None) -> tuple[bool, str, dict]:
     current, forecast = evidence.current, evidence.forecast
     controls = current.get("recommended_controls") or []
     flags = current.get("contextual_flags") or []
@@ -72,6 +84,17 @@ def _eligibility(tool: str, evidence: AgentEvidence) -> tuple[bool, str, dict]:
         chosen = min(samples, key=lambda p: (p["temperature_c"], p["requested_local_timestamp"]))
         if chosen["temperature_c"] >= now_temp: return False, "no_strictly_cooler_sampled_period", {}
         return True, "provider_backed_cooler_sample", {**chosen, "current_temperature_c": now_temp, "difference_from_current_c": chosen["temperature_c"] - now_temp}
+    if tool == "propose_cooler_zone_candidate":
+        candidates = spatial_heat.candidates if spatial_heat is not None and spatial_heat.status == "available" else []
+        if not candidates: return False, "spatial_candidate_unavailable", {}
+        chosen = sorted(candidates, key=lambda item: item.rank)[0]
+        return True, "provider_backed_cooler_zone_candidate", {
+            "candidate_id": chosen.candidate_id, "temperature_c": chosen.temperature_c,
+            "cooler_by_c": chosen.cooler_by_c, "centroid_latitude": chosen.centroid_latitude,
+            "centroid_longitude": chosen.centroid_longitude,
+            "straight_line_distance_m": chosen.straight_line_distance_m,
+            "label": "cooler zone candidate",
+        }
     return False, "unsupported_tool", {}
 
 
@@ -104,7 +127,7 @@ async def decide(request: AgentDecisionRequest, *, model: AgentModel | None = No
         action_type = TOOL_ACTION[call.name]
         if action_type != "supervisor_review" and operational_count >= 3:
             trace.append(AgentToolTrace(tool_name=call.name, status="rejected", safe_reason="operational_action_limit_reached")); continue
-        eligible, reason, details = _eligibility(call.name, evidence)
+        eligible, reason, details = _eligibility(call.name, evidence, request.spatial_heat)
         if not eligible:
             trace.append(AgentToolTrace(tool_name=call.name, status="rejected", safe_reason=reason)); continue
         action_id = str(uuid4())

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.prediction import PredictHeatOutlookResponse
 from app.models.risk import RiskAssessment, TaskContext, USSiteLocation, WorkerContext
+from app.models.spatial import SpatialHeatResponse
 
 
 class StrictModel(BaseModel):
@@ -18,6 +19,7 @@ class StrictModel(BaseModel):
 ActionType = Literal[
     "cool_recovery", "reduce_physical_demands", "consider_cooler_sampled_period",
     "increase_monitoring", "limit_direct_sun", "supervisor_review",
+    "consider_cooler_zone",
 ]
 
 
@@ -26,11 +28,13 @@ class AgentDecisionRequest(StrictModel):
     heat_outlook: PredictHeatOutlookResponse
     supervisor_id: str | None = Field(default=None, min_length=1, max_length=100)
     notes: str | None = Field(default=None, max_length=1000)
+    spatial_heat: SpatialHeatResponse | None = None
 
 
 class AgentEvidence(BaseModel):
     current: dict[str, Any]
     forecast: dict[str, Any]
+    spatial: dict[str, Any] | None = None
 
 
 class AgentAction(BaseModel):
@@ -75,6 +79,8 @@ class HeatShieldCycleRequest(StrictModel):
     worker: WorkerContext
     task: TaskContext
     forecast_offset_hours: list[int] = Field(default_factory=lambda: [1, 3, 6, 9, 12], min_length=1, max_length=5)
+    include_spatial_intelligence: bool = False
+    spatial_search_radius_meters: int = Field(default=400, ge=100, le=1500)
 
     @field_validator("forecast_offset_hours")
     @classmethod
@@ -100,8 +106,9 @@ class CyclePlanResponse(BaseModel):
     status: str
     current_assessment: RiskAssessment
     heat_outlook: PredictHeatOutlookResponse
+    spatial_heat: SpatialHeatResponse | None = None
     agent_decision: AgentDecisionResponse
-    next_step: Literal["human_approval_required"] = "human_approval_required"
+    next_step: Literal["human_approval_required", "agent_configuration_required", "no_action_available", "fresh_evidence_required"]
 
 
 class ApprovalRequest(StrictModel):

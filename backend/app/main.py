@@ -7,6 +7,7 @@ from app.api.risk import router as risk_router
 from app.api.predict import router as predict_router
 from app.api.agent import router as agent_router
 from app.api.cycle import router as cycle_router
+from app.api.spatial import router as spatial_router
 
 
 logging.basicConfig(
@@ -33,6 +34,7 @@ app.include_router(risk_router, prefix="/api")
 app.include_router(predict_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
 app.include_router(cycle_router, prefix="/api")
+app.include_router(spatial_router, prefix="/api")
 
 
 @app.get("/")

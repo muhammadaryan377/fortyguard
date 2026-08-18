@@ -13,12 +13,15 @@ from app.models.operations import (
 )
 from app.models.prediction import PredictHeatOutlookRequest
 from app.models.risk import LiveDateTimeFilter, RiskAssessment
+from app.models.spatial import SpatialHeatRequest, SpatialHeatResponse, SpatialHeatSummary, SpatialSiteReference
+from app.core.config import settings
 from app.services.agent_decision import decide
 from app.services.agent_model import AgentModel
 from app.services.fortyguard import FortyGuardClient, fortyguard_client
 from app.services.live_environment import get_live_environment
 from app.services.predictive_heat import create_heat_outlook
 from app.services.risk_engine import assess_risk
+from app.services.spatial_heat import create_spatial_heat
 from app.services.state_store import HeatShieldStateStore
 
 
@@ -39,6 +42,12 @@ def _snapshot(assessment: RiskAssessment) -> EvidenceSnapshot:
     )
 
 
+def next_step_for_decision(status: str, action_count: int) -> str:
+    if status == "decided": return "human_approval_required" if action_count else "no_action_available"
+    return {"agent_unavailable": "agent_configuration_required", "no_action_selected": "no_action_available",
+            "insufficient_data": "fresh_evidence_required"}[status]
+
+
 class CycleOrchestrator:
     def __init__(self, store: HeatShieldStateStore, *, client: FortyGuardClient = fortyguard_client,
                  agent_model: AgentModel | None = None, clock: Callable[[], datetime] | None = None) -> None:
@@ -56,7 +65,24 @@ class CycleOrchestrator:
         predict_request = PredictHeatOutlookRequest(location=request.location, timezone_name=request.timezone_name, offset_hours=request.forecast_offset_hours)
         outlook = await create_heat_outlook(predict_request, client=self.client, now=now)
         self.store.add_audit(cycle_id, "prediction_completed", {"status": outlook.status})
-        decision = await decide(AgentDecisionRequest(current_assessment=assessment, heat_outlook=outlook), model=self.agent_model, now=now)
+        spatial = None
+        if request.include_spatial_intelligence:
+            self.store.add_audit(cycle_id, "spatial_query_started")
+            spatial_request = SpatialHeatRequest(location=request.location, timezone_name=request.timezone_name,
+                search_radius_meters=request.spatial_search_radius_meters,
+                granularity=settings.heatshield_live_granularity_meters)
+            try:
+                spatial = await create_spatial_heat(spatial_request, client=self.client, clock=lambda: now)
+                event = "spatial_completed" if spatial.status == "available" else "spatial_no_cooler_candidate" if spatial.status == "no_cooler_candidate" else "spatial_unavailable"
+                self.store.add_audit(cycle_id, event, {"activity_id": spatial.heatmap_activity_id, "valid_tile_count": spatial.summary.valid_tile_count, "candidate_count": spatial.summary.cooler_candidate_count})
+            except Exception:
+                spatial = SpatialHeatResponse(status="insufficient_data", generated_at=now, location=request.location,
+                    timezone_name=request.timezone_name, search_radius_meters=request.spatial_search_radius_meters,
+                    granularity=settings.heatshield_live_granularity_meters, site_reference=SpatialSiteReference(), tiles=[], candidates=[],
+                    summary=SpatialHeatSummary(valid_tile_count=0, cooler_candidate_count=0),
+                    limitations=["Spatial provider evidence was unavailable; no cooler zone candidate was created."])
+                self.store.add_audit(cycle_id, "spatial_unavailable")
+        decision = await decide(AgentDecisionRequest(current_assessment=assessment, heat_outlook=outlook, spatial_heat=spatial), model=self.agent_model, now=now)
         self.store.save_decision(decision.decision_id, cycle_id, decision.model_dump(mode="json"))
         self.store.add_audit(cycle_id, "agent_unavailable" if decision.status == "agent_unavailable" else "agent_called", {"status": decision.status})
         for item in decision.tool_trace:
@@ -64,8 +90,11 @@ class CycleOrchestrator:
         for action in decision.actions:
             self.store.save_action(cycle_id, action.model_dump(mode="json"))
             self.store.add_audit(cycle_id, "action_proposed", {"action_id": action.action_id, "action_type": action.action_type})
+            if action.action_type == "consider_cooler_zone":
+                self.store.add_audit(cycle_id, "cooler_zone_proposed", {"candidate_id": action.details.get("candidate_id"), "temperature_difference_c": action.details.get("cooler_by_c"), "distance_m": action.details.get("straight_line_distance_m")})
+        next_step = next_step_for_decision(decision.status, len(decision.actions))
         response = CyclePlanResponse(cycle_id=cycle_id, parent_cycle_id=parent_cycle_id, status=decision.status,
-            current_assessment=assessment, heat_outlook=outlook, agent_decision=decision)
+            current_assessment=assessment, heat_outlook=outlook, spatial_heat=spatial, agent_decision=decision, next_step=next_step)
         self.store.save_cycle(cycle_id, {"request": request.model_dump(mode="json"), "response": response.model_dump(mode="json")})
         if parent_cycle_id: self.store.add_audit(cycle_id, "recheck_created", {"parent_cycle_id": parent_cycle_id})
         return response
@@ -88,6 +117,8 @@ class CycleOrchestrator:
                 self.store.save_operational_record(action_id, cycle_id, record)
                 self.store.update_action(cycle_id, action_id, "executed")
                 self.store.add_audit(cycle_id, "action_executed", {"action_id": action_id, "record_type": record["record_type"]})
+                if action["action_type"] == "consider_cooler_zone":
+                    self.store.add_audit(cycle_id, "relocation_candidate_approved", {"candidate_id": action.get("details", {}).get("candidate_id"), "temperature_difference_c": action.get("details", {}).get("cooler_by_c"), "distance_m": action.get("details", {}).get("straight_line_distance_m")})
                 results.append(ActionExecutionResult(action_id=action_id, action_type=action["action_type"], status="executed", safe_reason="internal_operational_state_created", operational_record=record))
             except Exception:
                 self.store.update_action(cycle_id, action_id, "failed"); self.store.add_audit(cycle_id, "action_failed", {"action_id": action_id})
@@ -101,11 +132,13 @@ class CycleOrchestrator:
             "cool_recovery": ("recovery_control", "active"), "reduce_physical_demands": ("task_adjustment", "active"),
             "increase_monitoring": ("monitoring_control", "active"), "limit_direct_sun": ("direct_sun_mitigation", "active"),
             "supervisor_review": ("supervisor_review", "pending"), "consider_cooler_sampled_period": ("schedule_candidate", "approved_candidate"),
+            "consider_cooler_zone": ("relocation_candidate", "approved_candidate"),
         }
         if kind not in mapping: raise ValueError("Unsupported internal action")
         record_type, state = mapping[kind]
         record = {"record_id": str(uuid4()), "action_id": action["action_id"], "record_type": record_type, "state": state}
         if kind == "consider_cooler_sampled_period": record["provider_backed_sample"] = action.get("details", {})
+        if kind == "consider_cooler_zone": record["provider_backed_spatial_candidate"] = action.get("details", {})
         return record
 
     async def verify(self, cycle_id: str) -> VerificationResponse:
@@ -125,16 +158,20 @@ class CycleOrchestrator:
         for action in executed:
             record = self.store.get_operational_record(action["action_id"])
             if record:
-                self.store.update_action(cycle_id, action["action_id"], "verified")
-                action_results.append({"action_id": action["action_id"], "status": "verified", "record_type": record["record_type"]})
+                expected = {"recovery_control":"active", "task_adjustment":"active", "monitoring_control":"active",
+                    "direct_sun_mitigation":"active", "schedule_candidate":"approved_candidate", "relocation_candidate":"approved_candidate"}
+                internal_verified = expected.get(record["record_type"]) == record.get("state")
+                if internal_verified: self.store.update_action(cycle_id, action["action_id"], "verified")
+                action_results.append({"action_id": action["action_id"], "status": "internal_state_verified" if internal_verified else "pending_requires_review", "internal_state_verified": internal_verified, "record_type": record["record_type"]})
                 if action["action_type"] == "consider_cooler_sampled_period": planned = action.get("details", {}).get("difference_from_current_c")
-        status = "insufficient_data" if after_assessment.risk_level == "insufficient_data" else "verified" if executed and len(action_results) == len(executed) else "partial"
+        verified_count = sum(bool(item.get("internal_state_verified")) for item in action_results)
+        status = "insufficient_data" if after_assessment.risk_level == "insufficient_data" else "verified" if executed and verified_count == len(executed) else "partial"
         result = VerificationResponse(verification_id=str(uuid4()), cycle_id=cycle_id, generated_at=now,
             action_state_results=action_results, before=before, after=after,
             observed_temperature_change_c=temp_change, observed_heat_index_change_c=hi_change, screening_band_changed=band_changed,
-            executed_action_count=len(executed), verified_action_count=len(action_results), planned_schedule_temperature_difference_c=planned,
+            executed_action_count=len(executed), verified_action_count=verified_count, planned_schedule_temperature_difference_c=planned,
             status=status, causality_disclaimer="Observed environmental changes are not attributed causally to the HeatShield action without additional evidence.",
-            limitations=["Before/after values are observed environmental evidence, not proof of action effectiveness.", "This verification is not medical advice or a legal compliance determination."])
+            limitations=["Before/after values are observed environmental evidence, not proof of action effectiveness.", "Internal action state verified does not mean a worker physically followed the control.", "A relocation candidate record does not verify worker movement; fresh evidence remains tied to the original site coordinate.", "This verification is not medical advice or a legal compliance determination."])
         self.store.save_verification(result.verification_id, cycle_id, result.model_dump(mode="json"))
         self.store.add_audit(cycle_id, "verification_completed", {"verification_id": result.verification_id, "status": status})
         return result
