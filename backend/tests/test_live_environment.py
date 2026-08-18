@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -133,6 +134,17 @@ def test_temperature_extraction_uses_containing_feature_value():
     assert verified.extraction_method == "containing_heatmap_feature_value"
 
 
+def test_site_outside_every_tile_fails_without_nearest_fallback():
+    with pytest.raises(TemperatureUnavailableError, match="No containing"):
+        extract_verified_temperature(
+            heatmap_result()["map_data"],
+            latitude=33.4600,
+            longitude=-112.0900,
+            timestamp="2026-08-18T12:00",
+            activity_id="heatmap-1",
+        )
+
+
 def test_temperature_extraction_never_falls_back_to_stats():
     with pytest.raises(TemperatureUnavailableError):
         extract_verified_temperature(
@@ -169,6 +181,19 @@ def test_missing_and_mismatched_observations_fail_safely():
         )
 
 
+def test_equally_valid_observations_are_rejected_as_ambiguous():
+    result = environment_result(
+        ["2026-08-18T12:00:00-07:00", "2026-08-18T12:00:00-07:00"]
+    )
+    for values in result["locations"][0]["parameters"].values():
+        values.append(values[0])
+    observations = normalize_environmental_result(result)
+    with pytest.raises(TimestampMismatchError, match="ambiguous"):
+        match_single_observation(
+            observations, location=phoenix_location(), date_time=live_time()
+        )
+
+
 @pytest.mark.asyncio
 async def test_heatmap_precedes_env_params_and_provenance_is_preserved():
     events = []
@@ -200,6 +225,11 @@ async def test_heatmap_precedes_env_params_and_provenance_is_preserved():
     assert observation.temperature_c == 41.2
     assert observation.provenance.heatmap_activity_id == "heatmap-activity"
     assert observation.provenance.environment_activity_id == "environment-activity"
+    assert observation.provenance.matched_provider_timestamp == "2026-08-18T12:00:00-07:00"
+    serialized_raw = json.dumps(observation.raw)
+    assert "selected_heatmap_feature" in observation.raw
+    assert "FeatureCollection" not in serialized_raw
+    assert "stats_data" not in serialized_raw
 
 
 @pytest.mark.asyncio

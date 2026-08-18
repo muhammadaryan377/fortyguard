@@ -109,9 +109,7 @@ class VerifiedTemperature(BaseModel):
     longitude: float
     timestamp: str
     temperature_c: float
-    extraction_method: Literal[
-        "containing_heatmap_feature_value", "nearest_heatmap_feature_value"
-    ]
+    extraction_method: Literal["containing_heatmap_feature_value"]
     activity_id: str
     raw: dict[str, Any] = Field(default_factory=dict)
 

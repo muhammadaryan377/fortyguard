@@ -99,6 +99,7 @@ def assess_risk(
 
     timestamp = _parse_timestamp(environment.timestamp)
     stale = False
+    future = False
     if environment.timestamp is None:
         missing.append("timestamp")
         explanations.append("Environmental timestamp was unavailable; freshness could not be verified.")
@@ -106,10 +107,16 @@ def assess_risk(
         missing.append("valid_timestamp")
         explanations.append("Environmental timestamp was malformed; freshness could not be verified.")
     else:
-        stale = current_time - timestamp > timedelta(minutes=settings.heatshield_max_data_age_minutes)
+        age = current_time - timestamp
+        stale = age > timedelta(minutes=settings.heatshield_max_data_age_minutes)
+        future = -age > timedelta(minutes=settings.heatshield_max_future_skew_minutes)
         if stale:
             explanations.append(
                 f"Environmental reading exceeds the configured {settings.heatshield_max_data_age_minutes}-minute freshness limit."
+            )
+        if future:
+            explanations.append(
+                "Environmental timestamp is ahead of the allowed current-observation clock-skew window."
             )
 
     has_thermal_evidence = any(name in available for name in THERMAL_FIELDS)
@@ -125,6 +132,10 @@ def assess_risk(
         quality = "stale"
         risk_level = "insufficient_data"
         explanations.append("A current operational risk classification was not produced from stale data.")
+    elif future:
+        quality = "insufficient"
+        risk_level = "insufficient_data"
+        explanations.append("Future data was not accepted as current environmental evidence.")
     else:
         quality = "good" if not missing else "partial"
         risk_level = "configuration_required"

@@ -109,6 +109,34 @@ def test_stale_data_is_identified():
     assert result.risk_level == "insufficient_data"
 
 
+def test_fresh_current_data_continues_to_rule_configuration():
+    result = assess_risk(environment(timestamp=NOW.isoformat()), worker(), task(), now=NOW)
+    assert result.risk_level == "configuration_required"
+    assert result.data_quality == "partial"
+
+
+def test_small_future_clock_skew_is_permitted():
+    slightly_future = environment(timestamp=(NOW + timedelta(minutes=4)).isoformat())
+    result = assess_risk(slightly_future, worker(), task(), now=NOW)
+    assert result.risk_level == "configuration_required"
+    assert not any("ahead of the allowed" in text for text in result.explanations)
+
+
+def test_future_timestamp_beyond_tolerance_is_insufficient():
+    future = environment(timestamp=(NOW + timedelta(minutes=6)).isoformat())
+    result = assess_risk(future, worker(), task(), now=NOW)
+    assert result.risk_level == "insufficient_data"
+    assert result.data_quality == "insufficient"
+    assert any("ahead of the allowed" in text for text in result.explanations)
+
+
+@pytest.mark.parametrize("timestamp", [None, "not-a-timestamp"])
+def test_missing_or_malformed_timestamp_is_insufficient(timestamp):
+    result = assess_risk(environment(timestamp=timestamp), worker(), task(), now=NOW)
+    assert result.risk_level == "insufficient_data"
+    assert result.data_quality == "partial"
+
+
 def test_unconfigured_rules_do_not_invent_numeric_thresholds():
     result = assess_risk(environment(), worker(), task(), now=NOW)
     assert result.risk_level == "configuration_required"

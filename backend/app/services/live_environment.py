@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from math import cos, hypot, radians
+from math import cos, radians
 from typing import Any
 
 from app.core.config import settings
@@ -110,7 +110,7 @@ def _point_in_ring(longitude: float, latitude: float, ring: list[list[Any]]) -> 
 
 def _feature_candidate(
     feature: Any, latitude: float, longitude: float
-) -> tuple[bool, float, float, dict[str, Any]] | None:
+) -> tuple[float, dict[str, Any]] | None:
     if not isinstance(feature, dict):
         return None
     properties = feature.get("properties")
@@ -137,10 +137,9 @@ def _feature_candidate(
     ]
     if len(valid_positions) < 4:
         return None
-    centroid_lon = sum(position[0] for position in valid_positions[:-1]) / max(1, len(valid_positions) - 1)
-    centroid_lat = sum(position[1] for position in valid_positions[:-1]) / max(1, len(valid_positions) - 1)
-    distance = hypot(centroid_lon - longitude, centroid_lat - latitude)
-    return _point_in_ring(longitude, latitude, ring), distance, float(value), feature
+    if not _point_in_ring(longitude, latitude, ring):
+        return None
+    return float(value), feature
 
 
 def extract_verified_temperature(
@@ -156,26 +155,26 @@ def extract_verified_temperature(
     features = map_data.get("features")
     if not isinstance(features, list) or not features:
         raise TemperatureUnavailableError("FortyGuard heatmap contains no spatial features")
-    candidates = [
+    containing = [
         candidate
         for feature in features
         if (candidate := _feature_candidate(feature, latitude, longitude)) is not None
     ]
-    if not candidates:
+    if not containing:
         raise TemperatureUnavailableError(
-            "No documented TCM feature value could be extracted from the FortyGuard heatmap"
+            "No containing FortyGuard TCM tile supplied a documented temperature value"
         )
-    containing = [candidate for candidate in candidates if candidate[0]]
-    chosen = min(containing or candidates, key=lambda candidate: candidate[1])
-    method = "containing_heatmap_feature_value" if containing else "nearest_heatmap_feature_value"
+    # Overlapping containing tiles are resolved deterministically in provider order;
+    # unlike a nearest-tile fallback, every candidate spatially contains the site.
+    chosen = containing[0]
     return VerifiedTemperature(
         latitude=latitude,
         longitude=longitude,
         timestamp=timestamp,
-        temperature_c=chosen[2],
-        extraction_method=method,
+        temperature_c=chosen[0],
+        extraction_method="containing_heatmap_feature_value",
         activity_id=activity_id,
-        raw={"selected_feature": chosen[3]},
+        raw={"selected_feature": chosen[1]},
     )
 
 
@@ -202,7 +201,6 @@ async def get_verified_temperature(
         timestamp=requested,
         activity_id=activity_id,
     )
-    verified.raw["heatmap_result"] = heatmap.raw
     return verified
 
 
@@ -277,8 +275,15 @@ async def get_live_environment(
         matched_provider_timestamp=selected.timestamp or "",
         temperature_extraction_method=verified.extraction_method,
     )
+    provider_metadata = selected.raw.get("metadata", {})
+    compact_metadata = {
+        key: provider_metadata[key]
+        for key in ("timezone", "timezone_offset_hours", "time_range")
+        if key in provider_metadata
+    }
     selected.raw = {
-        "heatmap": verified.raw,
-        "environmental_parameters": selected.raw,
+        "selected_heatmap_feature": verified.raw.get("selected_feature"),
+        "selected_heatmap_temperature_c": verified.temperature_c,
+        "environmental_metadata": compact_metadata,
     }
     return selected
