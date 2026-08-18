@@ -107,9 +107,18 @@ class RiskAssessmentRequest(StrictModel):
     task: TaskContext
 
 
+class LiveDateTimeFilter(EnvironmentalDateTimeFilter):
+    filter_type: Literal[1]
+
+    @model_validator(mode="after")
+    def require_single_hour(self) -> "LiveDateTimeFilter":
+        if self.start_time is None:
+            raise ValueError("start_time is required for a live single-hour assessment")
+        return self
+
+
 class LiveRiskAssessmentRequest(StrictModel):
     location: USSiteLocation
-    temperature_c: float
-    date_time: EnvironmentalDateTimeFilter
+    date_time: LiveDateTimeFilter
     worker: WorkerContext
     task: TaskContext

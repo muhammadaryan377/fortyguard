@@ -103,6 +103,29 @@ class HeatmapResult(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class VerifiedTemperature(BaseModel):
+    source: Literal["fortyguard_heatmap"] = "fortyguard_heatmap"
+    latitude: float
+    longitude: float
+    timestamp: str
+    temperature_c: float
+    extraction_method: Literal[
+        "containing_heatmap_feature_value", "nearest_heatmap_feature_value"
+    ]
+    activity_id: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class EnvironmentalProvenance(BaseModel):
+    temperature_source: Literal["fortyguard_heatmap"]
+    environmental_parameters_source: Literal["fortyguard_env_params"]
+    heatmap_activity_id: str
+    environment_activity_id: str
+    requested_timestamp: str
+    matched_provider_timestamp: str
+    temperature_extraction_method: str
+
+
 class EnvironmentalConditions(BaseModel):
     source: Literal["fortyguard"] = "fortyguard"
     location: dict[str, Any] = Field(default_factory=dict)
@@ -110,6 +133,8 @@ class EnvironmentalConditions(BaseModel):
     temperature_c: float | None = None
     heat_index_c: float | None = None
     apparent_temperature_c: float | None = None
+    # Wet-bulb temperature is not WBGT and must never be evaluated as WBGT.
     wet_bulb_temperature_c: float | None = None
     relative_humidity: float | None = None
+    provenance: EnvironmentalProvenance | None = None
     raw: dict[str, Any] = Field(default_factory=dict)

@@ -74,7 +74,27 @@ The actual map and statistics content is provider-defined. Missing environmental
 ## Deterministic risk assessment
 
 - `POST /api/risk/assess` accepts normalized environmental evidence, worker context, and task context.
-- `POST /api/risk/assess-live` uses the existing FortyGuard client, normalizes its result, and passes it into the same deterministic engine.
+- `POST /api/risk/assess-live` accepts only a USA site, one requested hour, worker context, and task context. It does not accept a manually entered live temperature.
+
+The live evidence flow is:
+
+```text
+Location + requested hour
+  ↓
+Small deterministic site polygon
+  ↓
+FortyGuard TCM Heatmap
+  ↓
+Verified containing/nearest GeoJSON tile value
+  ↓
+FortyGuard Environmental Parameters
+  ↓
+Timestamp-matched EnvironmentalConditions
+  ↓
+Deterministic RiskAssessment
+```
+
+Heatmap and environmental activity IDs, requested/matched timestamps, extraction method, and provider snapshots are preserved as structured provenance. If a documented tile value cannot be extracted, environmental observations are absent, or timestamps cannot be matched deterministically, the request fails safely. Heatmap aggregate mean/minimum/maximum statistics are never substituted for a site temperature.
 
 When environmental evidence is missing or stale, the engine returns `insufficient_data`. When fresh evidence exists but validated numeric occupational rules are absent, it returns `configuration_required` with a `null` risk score. Operational factors such as workload, acclimatization, direct sun, exposure duration, and PPE are reported without converting them into fabricated medical or numeric risk categories.
 
@@ -107,6 +127,42 @@ Swagger is available at <http://127.0.0.1:8000/docs>. A safe mocked/manual reque
 ```
 
 The timestamp must be current enough for the configured freshness window when performing a live manual test.
+
+A live request to `/api/risk/assess-live` uses this shape:
+
+```json
+{
+  "location": {
+    "site_id": "PHX-SITE-01",
+    "name": "Phoenix Outdoor Construction Site",
+    "city": "Phoenix",
+    "state": "Arizona",
+    "country": "United States",
+    "latitude": 33.4484,
+    "longitude": -112.0740
+  },
+  "date_time": {
+    "start_date": "2026-08-18",
+    "start_time": "12:00",
+    "filter_type": 1
+  },
+  "worker": {
+    "worker_id": "W-101",
+    "site_id": "PHX-SITE-01",
+    "acclimatized": false
+  },
+  "task": {
+    "task_id": "TASK-1",
+    "task_name": "Outdoor construction task",
+    "workload_level": "heavy",
+    "exposure_duration_minutes": 45,
+    "outdoor": true,
+    "direct_sun": true
+  }
+}
+```
+
+Only `filter_type: 1` is supported by the current live endpoint. Multi-period analysis is intentionally deferred to PREDICT.
 
 ## Tests
 

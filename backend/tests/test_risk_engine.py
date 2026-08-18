@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.main import app
-from app.models.fortyguard import EnvironmentalConditions, FortyGuardJobStatus
+from app.models.fortyguard import EnvironmentalConditions
 from app.models.risk import TaskContext, WorkerContext
 from app.services.risk_engine import assess_risk
 
@@ -134,28 +134,10 @@ class FixedDateTime(datetime):
 
 @pytest.mark.asyncio
 async def test_assess_live_uses_mocked_existing_fortyguard_client(monkeypatch):
-    submit = AsyncMock(return_value="mock-activity")
-    wait = AsyncMock(
-        return_value=FortyGuardJobStatus(
-            activity_id="mock-activity",
-            status="Completed",
-            result={
-                "metadata": {"timestamps": [NOW.isoformat()]},
-                "locations": [
-                    {
-                        "lat": 33.4484,
-                        "lon": -112.0740,
-                        "temperature": 30.0,
-                        "parameters": {"relative_humidity_percent": [25.0]},
-                    }
-                ],
-            },
-        )
+    live_environment = AsyncMock(
+        return_value=environment(relative_humidity=25.0)
     )
-    monkeypatch.setattr(
-        "app.api.risk.fortyguard_client.get_environmental_parameters", submit
-    )
-    monkeypatch.setattr("app.api.risk.fortyguard_client.wait_for_result", wait)
+    monkeypatch.setattr("app.api.risk.get_live_environment", live_environment)
     monkeypatch.setattr("app.services.risk_engine.datetime", FixedDateTime)
 
     payload = {
@@ -168,7 +150,6 @@ async def test_assess_live_uses_mocked_existing_fortyguard_client(monkeypatch):
             "latitude": 33.4484,
             "longitude": -112.0740,
         },
-        "temperature_c": 30.0,
         "date_time": {
             "start_date": "2026-08-18",
             "start_time": "12:00",
@@ -180,5 +161,4 @@ async def test_assess_live_uses_mocked_existing_fortyguard_client(monkeypatch):
     response = TestClient(app).post("/api/risk/assess-live", json=payload)
     assert response.status_code == 200
     assert response.json()["risk_level"] == "configuration_required"
-    submit.assert_awaited_once()
-    wait.assert_awaited_once_with("mock-activity")
+    live_environment.assert_awaited_once()

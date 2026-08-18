@@ -105,10 +105,13 @@ async def test_malformed_provider_response(client_factory):
 
 def test_normalization_preserves_missing_values_as_none():
     rows = normalize_environmental_result(
-        {"metadata": {}, "locations": [{"lat": 25.2, "lon": 55.3, "parameters": {}}]}
+        {
+            "metadata": {},
+            "locations": [{"lat": 33.4484, "lon": -112.0740, "parameters": {}}],
+        }
     )
     assert len(rows) == 1
-    assert rows[0].location == {"lat": 25.2, "lon": 55.3}
+    assert rows[0].location == {"lat": 33.4484, "lon": -112.0740}
     assert rows[0].heat_index_c is None
     assert rows[0].wet_bulb_temperature_c is None
 

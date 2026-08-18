@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,6 +19,9 @@ class Settings(BaseSettings):
     heatshield_demo_latitude: float = 33.4484
     heatshield_demo_longitude: float = -112.0740
     heatshield_max_data_age_minutes: int = 30
+    heatshield_site_polygon_radius_meters: float = 75.0
+    heatshield_live_granularity_meters: Literal[60, 80, 100] = 60
+    heatshield_timestamp_tolerance_minutes: int = 5
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
