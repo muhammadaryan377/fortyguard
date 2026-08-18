@@ -1,0 +1,164 @@
+"""Typed contracts for constrained decisions and the operational cycle."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models.prediction import PredictHeatOutlookResponse
+from app.models.risk import RiskAssessment, TaskContext, USSiteLocation, WorkerContext
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+ActionType = Literal[
+    "cool_recovery", "reduce_physical_demands", "consider_cooler_sampled_period",
+    "increase_monitoring", "limit_direct_sun", "supervisor_review",
+]
+
+
+class AgentDecisionRequest(StrictModel):
+    current_assessment: RiskAssessment
+    heat_outlook: PredictHeatOutlookResponse
+    supervisor_id: str | None = Field(default=None, min_length=1, max_length=100)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class AgentEvidence(BaseModel):
+    current: dict[str, Any]
+    forecast: dict[str, Any]
+
+
+class AgentAction(BaseModel):
+    action_id: str
+    action_type: ActionType
+    status: Literal["proposed", "approved", "executed", "rejected", "failed", "verified"] = "proposed"
+    tool_name: str
+    worker_id: str
+    task_id: str
+    requires_human_approval: Literal[True] = True
+    reason_codes: list[str]
+    evidence_refs: list[str]
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentToolTrace(BaseModel):
+    tool_name: str
+    status: Literal["accepted", "rejected"]
+    safe_reason: str
+    action_id: str | None = None
+
+
+class AgentDecisionResponse(BaseModel):
+    status: Literal["decided", "insufficient_data", "agent_unavailable", "no_action_selected"]
+    decision_id: str
+    generated_at: datetime
+    model: str
+    worker_id: str
+    task_id: str
+    actions: list[AgentAction]
+    tool_trace: list[AgentToolTrace]
+    current_evidence_summary: dict[str, Any]
+    forecast_evidence_summary: dict[str, Any]
+    policy_version: str
+    requires_human_approval: Literal[True] = True
+    limitations: list[str]
+
+
+class HeatShieldCycleRequest(StrictModel):
+    location: USSiteLocation
+    timezone_name: str = "America/Phoenix"
+    worker: WorkerContext
+    task: TaskContext
+    forecast_offset_hours: list[int] = Field(default_factory=lambda: [1, 3, 6, 9, 12], min_length=1, max_length=5)
+
+    @field_validator("forecast_offset_hours")
+    @classmethod
+    def offsets(cls, value: list[int]) -> list[int]:
+        if len(set(value)) != len(value) or any(item < 1 or item > 12 for item in value):
+            raise ValueError("forecast offsets must be unique values between 1 and 12")
+        return sorted(value)
+
+    @field_validator("timezone_name")
+    @classmethod
+    def timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("timezone_name must be a valid IANA timezone") from exc
+        return value
+
+
+class CyclePlanResponse(BaseModel):
+    cycle_id: str
+    parent_cycle_id: str | None = None
+    status: str
+    current_assessment: RiskAssessment
+    heat_outlook: PredictHeatOutlookResponse
+    agent_decision: AgentDecisionResponse
+    next_step: Literal["human_approval_required"] = "human_approval_required"
+
+
+class ApprovalRequest(StrictModel):
+    supervisor_id: str = Field(min_length=1, max_length=100)
+    action_ids: list[str] = Field(min_length=1)
+
+    @field_validator("action_ids")
+    @classmethod
+    def unique_actions(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("action_ids must be unique")
+        return value
+
+
+class ActionExecutionResult(BaseModel):
+    action_id: str
+    action_type: str
+    status: Literal["executed", "failed", "already_executed"]
+    safe_reason: str
+    operational_record: dict[str, Any] | None = None
+
+
+class ApprovalResponse(BaseModel):
+    cycle_id: str
+    supervisor_id: str
+    results: list[ActionExecutionResult]
+
+
+class EvidenceSnapshot(BaseModel):
+    temperature_c: float | None = None
+    heat_index_c: float | None = None
+    screening_status: str | None = None
+    screening_band: str | None = None
+    data_quality: str
+
+
+class VerificationResponse(BaseModel):
+    verification_id: str
+    cycle_id: str
+    generated_at: datetime
+    action_state_results: list[dict[str, Any]]
+    before: EvidenceSnapshot
+    after: EvidenceSnapshot
+    observed_temperature_change_c: float | None = None
+    observed_heat_index_change_c: float | None = None
+    screening_band_changed: bool | None = None
+    executed_action_count: int
+    verified_action_count: int
+    planned_schedule_temperature_difference_c: float | None = None
+    status: Literal["verified", "partial", "insufficient_data"]
+    causality_disclaimer: str
+    limitations: list[str]
+
+
+class AuditEvent(BaseModel):
+    event_id: str
+    cycle_id: str
+    timestamp: datetime
+    event_type: str
+    safe_details: dict[str, Any] = Field(default_factory=dict)

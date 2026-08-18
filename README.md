@@ -219,6 +219,34 @@ Automated prediction tests use mocked provider jobs and consume zero FortyGuard 
 
 ## Tests
 
+## Backend operational loop
+
+HeatShield now implements the human-gated backend loop:
+
+`SENSE → ASSESS → PREDICT → DECIDE → ACT → VERIFY → RECHECK`
+
+- FortyGuard supplies current environmental evidence and future TCM temperature samples.
+- **AI model provider: DeepSeek V4 Flash.** DECIDE uses non-thinking mode and permits the model to select only six server-defined, argument-free tools. Server code validates every tool call and constructs every factual action detail.
+- Every proposed ACT action requires explicit supervisor approval. ACT currently creates only auditable HeatShield internal operational state; SMS, email, calendar, and external scheduling connectors are intentionally not wired.
+- VERIFY obtains fresh FortyGuard evidence and reports before/after observations without claiming that an action caused an environmental change.
+- RECHECK creates a successor cycle from fresh provider evidence and preserves the original historical cycle.
+- SQLite stores compact cycles, decisions, actions, operational records, and audit events. It never stores API keys, chain-of-thought, or full provider FeatureCollections.
+
+Operational endpoints:
+
+```text
+POST /api/risk/assess-live
+POST /api/predict/heat-outlook
+POST /api/agent/decide
+POST /api/cycle/plan
+POST /api/cycle/{cycle_id}/approve
+POST /api/cycle/{cycle_id}/verify
+POST /api/cycle/{cycle_id}/recheck
+GET  /api/cycle/{cycle_id}/audit
+```
+
+DeepSeek is used only for constrained tool selection. Model prose and chain-of-thought are not used or returned. Missing current evidence skips the model, while a missing/unavailable DeepSeek service leaves completed SENSE, ASSESS, and PREDICT evidence intact. Automated tests mock both providers and consume no FortyGuard or DeepSeek credits.
+
 Tests use mocked HTTP transports and do not consume FortyGuard credits:
 
 ```powershell

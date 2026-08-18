@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     heatshield_site_polygon_radius_meters: float = 75.0
     heatshield_live_granularity_meters: Literal[60, 80, 100] = 60
     heatshield_timestamp_tolerance_minutes: int = 5
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    heatshield_agent_model: str = "deepseek-v4-flash"
+    heatshield_agent_timeout_seconds: float = 30.0
+    heatshield_state_db_path: str = str(PROJECT_ROOT / "backend" / "runtime" / "heatshield_state.db")
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

@@ -21,3 +21,7 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# HeatShield runtime state
+backend/runtime/*.db
+backend/runtime/*.db-*
