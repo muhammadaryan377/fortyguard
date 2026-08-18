@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.prediction import PredictHeatOutlookResponse
 from app.models.risk import RiskAssessment, TaskContext, USSiteLocation, WorkerContext
 from app.models.spatial import SpatialHeatResponse
+from app.models.optimization import ShiftOptimizationResponse, ShiftTaskPlan, validate_task_dependencies
 
 
 class StrictModel(BaseModel):
@@ -20,6 +21,7 @@ ActionType = Literal[
     "cool_recovery", "reduce_physical_demands", "consider_cooler_sampled_period",
     "increase_monitoring", "limit_direct_sun", "supervisor_review",
     "consider_cooler_zone",
+    "consider_shift_plan",
 ]
 
 
@@ -29,12 +31,14 @@ class AgentDecisionRequest(StrictModel):
     supervisor_id: str | None = Field(default=None, min_length=1, max_length=100)
     notes: str | None = Field(default=None, max_length=1000)
     spatial_heat: SpatialHeatResponse | None = None
+    shift_optimization: ShiftOptimizationResponse | None = None
 
 
 class AgentEvidence(BaseModel):
     current: dict[str, Any]
     forecast: dict[str, Any]
     spatial: dict[str, Any] | None = None
+    shift_optimization: dict[str, Any] | None = None
 
 
 class AgentAction(BaseModel):
@@ -81,6 +85,8 @@ class HeatShieldCycleRequest(StrictModel):
     forecast_offset_hours: list[int] = Field(default_factory=lambda: [1, 3, 6, 9, 12], min_length=1, max_length=5)
     include_spatial_intelligence: bool = False
     spatial_search_radius_meters: int = Field(default=400, ge=100, le=1500)
+    include_shift_optimization: bool = False
+    shift_tasks: list[ShiftTaskPlan] | None = Field(default=None, min_length=1, max_length=6)
 
     @field_validator("forecast_offset_hours")
     @classmethod
@@ -99,6 +105,13 @@ class HeatShieldCycleRequest(StrictModel):
             raise ValueError("timezone_name must be a valid IANA timezone") from exc
         return value
 
+    @model_validator(mode="after")
+    def optimization_tasks_required(self) -> "HeatShieldCycleRequest":
+        if self.include_shift_optimization and not self.shift_tasks:
+            raise ValueError("shift_tasks is required when shift optimization is enabled")
+        if self.shift_tasks: validate_task_dependencies(self.shift_tasks)
+        return self
+
 
 class CyclePlanResponse(BaseModel):
     cycle_id: str
@@ -107,6 +120,7 @@ class CyclePlanResponse(BaseModel):
     current_assessment: RiskAssessment
     heat_outlook: PredictHeatOutlookResponse
     spatial_heat: SpatialHeatResponse | None = None
+    shift_optimization: ShiftOptimizationResponse | None = None
     agent_decision: AgentDecisionResponse
     next_step: Literal["human_approval_required", "agent_configuration_required", "no_action_available", "fresh_evidence_required"]
 

@@ -24,6 +24,7 @@ TOOL_ACTION = {
     "propose_limit_direct_sun": "limit_direct_sun",
     "request_supervisor_review": "supervisor_review",
     "propose_cooler_zone_candidate": "consider_cooler_zone",
+    "propose_shift_plan_candidate": "consider_shift_plan",
 }
 
 
@@ -60,7 +61,25 @@ def build_agent_evidence(request: AgentDecisionRequest) -> AgentEvidence:
                 for c in request.spatial_heat.candidates
             ],
         }
-    return AgentEvidence(current=current, forecast=forecast, spatial=spatial)
+    optimization = None
+    if request.shift_optimization is not None:
+        best = request.shift_optimization.best_candidate
+        optimization = {
+            "shift_optimization_status": request.shift_optimization.status,
+            "current_plan_status": request.shift_optimization.current_plan.status,
+            "best_candidate": None if best is None else {
+                "rank": best.rank,
+                "sampled_temperature_minutes_index": best.sampled_temperature_minutes_index,
+                "duration_weighted_sampled_start_temperature_c": best.duration_weighted_sampled_start_temperature_c,
+                "total_schedule_movement_hours": best.total_schedule_movement_hours,
+                "difference_vs_current_temperature_minutes_index": best.difference_vs_current_temperature_minutes_index,
+                "difference_vs_current_weighted_start_temperature_c": best.difference_vs_current_weighted_start_temperature_c,
+                "assignments": [{"task_id": a.task_id, "candidate_offset_hours": a.candidate_offset_hours,
+                    "sampled_local_start_timestamp": a.sampled_local_start_timestamp.isoformat(),
+                    "sampled_start_temperature_c": a.sampled_start_temperature_c} for a in best.assignments],
+            },
+        }
+    return AgentEvidence(current=current, forecast=forecast, spatial=spatial, shift_optimization=optimization)
 
 
 def _supported(control_text: list[str], words: tuple[str, ...]) -> bool:
@@ -68,7 +87,7 @@ def _supported(control_text: list[str], words: tuple[str, ...]) -> bool:
     return any(word in text for word in words)
 
 
-def _eligibility(tool: str, evidence: AgentEvidence, spatial_heat=None) -> tuple[bool, str, dict]:
+def _eligibility(tool: str, evidence: AgentEvidence, spatial_heat=None, shift_optimization=None) -> tuple[bool, str, dict]:
     current, forecast = evidence.current, evidence.forecast
     controls = current.get("recommended_controls") or []
     flags = current.get("contextual_flags") or []
@@ -94,6 +113,25 @@ def _eligibility(tool: str, evidence: AgentEvidence, spatial_heat=None) -> tuple
             "centroid_longitude": chosen.centroid_longitude,
             "straight_line_distance_m": chosen.straight_line_distance_m,
             "label": "cooler zone candidate",
+        }
+    if tool == "propose_shift_plan_candidate":
+        best = shift_optimization.best_candidate if shift_optimization is not None else None
+        if best is None: return False, "shift_plan_candidate_unavailable", {}
+        if shift_optimization.current_plan.status == "available":
+            if not best.is_strictly_lower_temperature_index_than_current:
+                return False, "no_strictly_lower_sampled_temperature_index", {}
+            reason = "lower_sampled_temperature_index_than_current_plan"
+        else:
+            reason = "feasible_candidate_without_valid_current_baseline"
+        return True, reason, {
+            "candidate_rank": best.rank,
+            "assignments": [assignment.model_dump(mode="json") for assignment in best.assignments],
+            "sampled_temperature_minutes_index": best.sampled_temperature_minutes_index,
+            "duration_weighted_sampled_start_temperature_c": best.duration_weighted_sampled_start_temperature_c,
+            "total_schedule_movement_hours": best.total_schedule_movement_hours,
+            "difference_vs_current_temperature_minutes_index": best.difference_vs_current_temperature_minutes_index,
+            "current_plan_status": shift_optimization.current_plan.status,
+            "label": "sampled-temperature schedule candidate",
         }
     return False, "unsupported_tool", {}
 
@@ -127,7 +165,7 @@ async def decide(request: AgentDecisionRequest, *, model: AgentModel | None = No
         action_type = TOOL_ACTION[call.name]
         if action_type != "supervisor_review" and operational_count >= 3:
             trace.append(AgentToolTrace(tool_name=call.name, status="rejected", safe_reason="operational_action_limit_reached")); continue
-        eligible, reason, details = _eligibility(call.name, evidence, request.spatial_heat)
+        eligible, reason, details = _eligibility(call.name, evidence, request.spatial_heat, request.shift_optimization)
         if not eligible:
             trace.append(AgentToolTrace(tool_name=call.name, status="rejected", safe_reason=reason)); continue
         action_id = str(uuid4())

@@ -79,5 +79,6 @@ AGENT_TOOLS = [
         ("propose_limit_direct_sun", "Propose limiting direct sun exposure."),
         ("request_supervisor_review", "Request supervisor review."),
         ("propose_cooler_zone_candidate", "Propose the server-ranked cooler zone candidate."),
+        ("propose_shift_plan_candidate", "Propose the server-ranked sampled-temperature shift plan candidate."),
     ]
 ]

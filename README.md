@@ -238,6 +238,7 @@ Operational endpoints:
 POST /api/risk/assess-live
 POST /api/predict/heat-outlook
 POST /api/spatial/cooler-zones
+POST /api/optimize/shift
 POST /api/agent/decide
 POST /api/cycle/plan
 POST /api/cycle/{cycle_id}/approve
@@ -284,6 +285,90 @@ Cycle planning can opt in using:
 ```
 
 The default is `false`, avoiding an additional provider request. When enabled, the constrained agent may select `propose_cooler_zone_candidate`; the server selects rank 1 and constructs all coordinates, temperatures, differences, and distance. After supervisor approval, ACT stores an internal `relocation_candidate` in `approved_candidate` state. This does not claim a worker moved, the area is safe, or relocation occurred. VERIFY confirms only the internal record state; physical location verification is outside Phase 1.
+
+## SMART SHIFT OPTIMIZER — Phase 1
+
+`POST /api/optimize/shift` consumes an existing PREDICT response and generates deterministic schedules using only exact, available FortyGuard sampled start timestamps. It does not call FortyGuard or DeepSeek, interpolate missing hours, or assign tasks to unavailable samples.
+
+```json
+{
+  "worker_id": "WORKER-01",
+  "heat_outlook": {
+    "status": "available",
+    "source": "fortyguard_heatmap",
+    "location": {
+      "site_id": "PHX-SITE-01",
+      "name": "Phoenix Outdoor Construction Site",
+      "city": "Phoenix",
+      "state": "Arizona",
+      "country": "United States",
+      "latitude": 33.4484,
+      "longitude": -112.074
+    },
+    "timezone_name": "America/Phoenix",
+    "generated_at": "2026-08-18T17:00:00Z",
+    "forecast_horizon_hours": 3,
+    "sample_offsets_hours": [1, 3],
+    "points": [
+      {
+        "status": "available",
+        "offset_hours": 1,
+        "requested_local_timestamp": "2026-08-18T11:00:00-07:00",
+        "requested_utc_timestamp": "2026-08-18T18:00:00Z",
+        "temperature_c": 40,
+        "source": "fortyguard_heatmap",
+        "analytic_type": "tcm",
+        "heatmap_activity_id": "forecast-1",
+        "extraction_method": "containing_heatmap_feature_value"
+      },
+      {
+        "status": "available",
+        "offset_hours": 3,
+        "requested_local_timestamp": "2026-08-18T13:00:00-07:00",
+        "requested_utc_timestamp": "2026-08-18T20:00:00Z",
+        "temperature_c": 32,
+        "source": "fortyguard_heatmap",
+        "analytic_type": "tcm",
+        "heatmap_activity_id": "forecast-3",
+        "extraction_method": "containing_heatmap_feature_value"
+      }
+    ],
+    "summary": {
+      "available_points": 2,
+      "total_points": 2,
+      "highest_sampled_temperature_c": 40,
+      "lowest_sampled_temperature_c": 32,
+      "first_to_last_temperature_change_c": -8,
+      "trend": "falling"
+    },
+    "limitations": []
+  },
+  "tasks": [
+    {
+      "task_id": "TASK-01",
+      "task_name": "Material handling",
+      "duration_minutes": 120,
+      "current_planned_offset_hours": 1,
+      "flexible": true,
+      "allowed_offset_hours": [1, 3],
+      "workload_level": "heavy",
+      "direct_sun": true,
+      "must_follow_task_ids": []
+    }
+  ],
+  "max_alternatives": 3
+}
+```
+
+The `sampled_temperature_minutes_index` is:
+
+`sum(sampled_start_temperature_c × duration_minutes)`
+
+It is a relative scheduling/planning index—not physiological heat dose, an occupational risk score, a medical metric, WBGT exposure, or Heat Index exposure. Each temperature describes only the exact sampled task-start timestamp, not average temperature over the task duration or continuous forecast coverage.
+
+Schedules must not overlap and must satisfy fixed-task, allowed-offset, and dependency ordering constraints. Feasible plans rank by lowest planning index, then least total offset movement, then the lexicographic offset tuple. No workload or direct-sun multiplier is invented.
+
+Cycle planning can opt in with `include_shift_optimization: true` and a non-empty `shift_tasks` list. It reuses the already-created `heat_outlook`, so optimization adds no provider request. DeepSeek may select only `propose_shift_plan_candidate`; the server supplies the validated best candidate. Supervisor approval stores an internal `shift_plan_candidate` in `approved_candidate` state. It does not mutate a calendar, prove task movement, or demonstrate real-world exposure change.
 
 Tests use mocked HTTP transports and do not consume FortyGuard credits:
 

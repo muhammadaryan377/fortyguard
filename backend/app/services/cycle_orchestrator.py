@@ -14,6 +14,7 @@ from app.models.operations import (
 from app.models.prediction import PredictHeatOutlookRequest
 from app.models.risk import LiveDateTimeFilter, RiskAssessment
 from app.models.spatial import SpatialHeatRequest, SpatialHeatResponse, SpatialHeatSummary, SpatialSiteReference
+from app.models.optimization import CurrentShiftPlanSummary, ShiftOptimizationRequest, ShiftOptimizationResponse
 from app.core.config import settings
 from app.services.agent_decision import decide
 from app.services.agent_model import AgentModel
@@ -22,6 +23,7 @@ from app.services.live_environment import get_live_environment
 from app.services.predictive_heat import create_heat_outlook
 from app.services.risk_engine import assess_risk
 from app.services.spatial_heat import create_spatial_heat
+from app.services.shift_optimizer import optimize_shift
 from app.services.state_store import HeatShieldStateStore
 
 
@@ -82,7 +84,23 @@ class CycleOrchestrator:
                     summary=SpatialHeatSummary(valid_tile_count=0, cooler_candidate_count=0),
                     limitations=["Spatial provider evidence was unavailable; no cooler zone candidate was created."])
                 self.store.add_audit(cycle_id, "spatial_unavailable")
-        decision = await decide(AgentDecisionRequest(current_assessment=assessment, heat_outlook=outlook, spatial_heat=spatial), model=self.agent_model, now=now)
+        optimization = None
+        if request.include_shift_optimization:
+            self.store.add_audit(cycle_id, "shift_optimization_started", {"task_count": len(request.shift_tasks or []), "available_slot_count": sum(p.status == "available" for p in outlook.points)})
+            try:
+                optimization = optimize_shift(ShiftOptimizationRequest(worker_id=request.worker.worker_id,
+                    heat_outlook=outlook, tasks=request.shift_tasks or []), now=now)
+            except Exception:
+                optimization = ShiftOptimizationResponse(status="no_feasible_plan", worker_id=request.worker.worker_id,
+                    generated_at=now, sample_offsets_considered=[],
+                    current_plan=CurrentShiftPlanSummary(status="unavailable", safe_reason="Shift optimization could not produce a validated plan."),
+                    candidates=[], limitations=["No schedule was fabricated after optimization failure."])
+            event = "shift_optimization_completed" if optimization.status == "available" else "shift_optimization_no_better_plan" if optimization.status == "no_better_plan" else "shift_optimization_no_feasible_plan"
+            self.store.add_audit(cycle_id, event, {"candidate_count": len(optimization.candidates),
+                "best_planning_index": optimization.best_candidate.sampled_temperature_minutes_index if optimization.best_candidate else None,
+                "comparison_index": optimization.best_candidate.difference_vs_current_temperature_minutes_index if optimization.best_candidate else None})
+        decision = await decide(AgentDecisionRequest(current_assessment=assessment, heat_outlook=outlook,
+            spatial_heat=spatial, shift_optimization=optimization), model=self.agent_model, now=now)
         self.store.save_decision(decision.decision_id, cycle_id, decision.model_dump(mode="json"))
         self.store.add_audit(cycle_id, "agent_unavailable" if decision.status == "agent_unavailable" else "agent_called", {"status": decision.status})
         for item in decision.tool_trace:
@@ -92,9 +110,12 @@ class CycleOrchestrator:
             self.store.add_audit(cycle_id, "action_proposed", {"action_id": action.action_id, "action_type": action.action_type})
             if action.action_type == "consider_cooler_zone":
                 self.store.add_audit(cycle_id, "cooler_zone_proposed", {"candidate_id": action.details.get("candidate_id"), "temperature_difference_c": action.details.get("cooler_by_c"), "distance_m": action.details.get("straight_line_distance_m")})
+            if action.action_type == "consider_shift_plan":
+                self.store.add_audit(cycle_id, "shift_plan_proposed", {"action_id": action.action_id, "best_planning_index": action.details.get("sampled_temperature_minutes_index")})
         next_step = next_step_for_decision(decision.status, len(decision.actions))
         response = CyclePlanResponse(cycle_id=cycle_id, parent_cycle_id=parent_cycle_id, status=decision.status,
-            current_assessment=assessment, heat_outlook=outlook, spatial_heat=spatial, agent_decision=decision, next_step=next_step)
+            current_assessment=assessment, heat_outlook=outlook, spatial_heat=spatial,
+            shift_optimization=optimization, agent_decision=decision, next_step=next_step)
         self.store.save_cycle(cycle_id, {"request": request.model_dump(mode="json"), "response": response.model_dump(mode="json")})
         if parent_cycle_id: self.store.add_audit(cycle_id, "recheck_created", {"parent_cycle_id": parent_cycle_id})
         return response
@@ -119,6 +140,8 @@ class CycleOrchestrator:
                 self.store.add_audit(cycle_id, "action_executed", {"action_id": action_id, "record_type": record["record_type"]})
                 if action["action_type"] == "consider_cooler_zone":
                     self.store.add_audit(cycle_id, "relocation_candidate_approved", {"candidate_id": action.get("details", {}).get("candidate_id"), "temperature_difference_c": action.get("details", {}).get("cooler_by_c"), "distance_m": action.get("details", {}).get("straight_line_distance_m")})
+                if action["action_type"] == "consider_shift_plan":
+                    self.store.add_audit(cycle_id, "shift_plan_approved", {"action_id": action_id})
                 results.append(ActionExecutionResult(action_id=action_id, action_type=action["action_type"], status="executed", safe_reason="internal_operational_state_created", operational_record=record))
             except Exception:
                 self.store.update_action(cycle_id, action_id, "failed"); self.store.add_audit(cycle_id, "action_failed", {"action_id": action_id})
@@ -133,12 +156,14 @@ class CycleOrchestrator:
             "increase_monitoring": ("monitoring_control", "active"), "limit_direct_sun": ("direct_sun_mitigation", "active"),
             "supervisor_review": ("supervisor_review", "pending"), "consider_cooler_sampled_period": ("schedule_candidate", "approved_candidate"),
             "consider_cooler_zone": ("relocation_candidate", "approved_candidate"),
+            "consider_shift_plan": ("shift_plan_candidate", "approved_candidate"),
         }
         if kind not in mapping: raise ValueError("Unsupported internal action")
         record_type, state = mapping[kind]
         record = {"record_id": str(uuid4()), "action_id": action["action_id"], "record_type": record_type, "state": state}
         if kind == "consider_cooler_sampled_period": record["provider_backed_sample"] = action.get("details", {})
         if kind == "consider_cooler_zone": record["provider_backed_spatial_candidate"] = action.get("details", {})
+        if kind == "consider_shift_plan": record["validated_shift_plan_candidate"] = action.get("details", {})
         return record
 
     async def verify(self, cycle_id: str) -> VerificationResponse:
@@ -160,6 +185,7 @@ class CycleOrchestrator:
             if record:
                 expected = {"recovery_control":"active", "task_adjustment":"active", "monitoring_control":"active",
                     "direct_sun_mitigation":"active", "schedule_candidate":"approved_candidate", "relocation_candidate":"approved_candidate"}
+                expected["shift_plan_candidate"] = "approved_candidate"
                 internal_verified = expected.get(record["record_type"]) == record.get("state")
                 if internal_verified: self.store.update_action(cycle_id, action["action_id"], "verified")
                 action_results.append({"action_id": action["action_id"], "status": "internal_state_verified" if internal_verified else "pending_requires_review", "internal_state_verified": internal_verified, "record_type": record["record_type"]})
@@ -171,7 +197,7 @@ class CycleOrchestrator:
             observed_temperature_change_c=temp_change, observed_heat_index_change_c=hi_change, screening_band_changed=band_changed,
             executed_action_count=len(executed), verified_action_count=verified_count, planned_schedule_temperature_difference_c=planned,
             status=status, causality_disclaimer="Observed environmental changes are not attributed causally to the HeatShield action without additional evidence.",
-            limitations=["Before/after values are observed environmental evidence, not proof of action effectiveness.", "Internal action state verified does not mean a worker physically followed the control.", "A relocation candidate record does not verify worker movement; fresh evidence remains tied to the original site coordinate.", "This verification is not medical advice or a legal compliance determination."])
+            limitations=["Before/after values are observed environmental evidence, not proof of action effectiveness.", "Internal action state verified does not mean a worker physically followed the control.", "A relocation candidate record does not verify worker movement; fresh evidence remains tied to the original site coordinate.", "A shift-plan candidate record does not verify tasks moved, the schedule was implemented, or temperature or risk decreased.", "This verification is not medical advice or a legal compliance determination."])
         self.store.save_verification(result.verification_id, cycle_id, result.model_dump(mode="json"))
         self.store.add_audit(cycle_id, "verification_completed", {"verification_id": result.verification_id, "status": status})
         return result
