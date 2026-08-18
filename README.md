@@ -164,6 +164,31 @@ A live request to `/api/risk/assess-live` uses this shape:
 
 Only `filter_type: 1` is supported by the current live endpoint. Multi-period analysis is intentionally deferred to PREDICT.
 
+## Heat Index screening policy
+
+Fresh, provider-reported `heat_index_c` evidence is converted deterministically to Fahrenheit and assigned a National Weather Service environmental screening band. The policy version is `heat-index-screening-nws-2026-v1` and uses lower-inclusive, upper-exclusive software boundaries:
+
+- Below Caution: below 80°F
+- Caution: 80°F to below 90°F
+- Extreme Caution: 90°F to below 103°F
+- Danger: 103°F to below 125°F
+- Extreme Danger: 125°F and above
+
+HeatShield does not recalculate a missing Heat Index from temperature and humidity. A missing provider Heat Index produces an `unavailable` screening result. Stale, malformed, missing-timestamp, or materially future evidence produces `insufficient_data` and cannot become an available current screening.
+
+The screening result includes occupational context flags for strenuous workload, acclimatization, direct sun, PPE/clothing, and recorded exposure duration. Recommendations are deterministic operational controls concerning hydration, shade/cool recovery, rest, monitoring, workload reduction, exposure reduction, acclimatization, and cooler-period scheduling. They are not clinical treatment or mandatory legal work/rest schedules.
+
+For direct-sun tasks, the response may show `full_sun_possible_upper_bound_f = heat_index_f + 15`. This is clearly labeled as an informational upper-bound scenario based on NWS/NIOSH guidance; it is not a measured Heat Index and does not replace the provider value or its screening band.
+
+Authoritative sources:
+
+- [OSHA Heat Hazard Recognition](https://www.osha.gov/heat-exposure/hazards)
+- [CDC/NIOSH OSHA-NIOSH Heat Safety Tool](https://www.cdc.gov/niosh/heat-stress/communication-resources/app.html)
+- [CDC/NIOSH Workplace Recommendations](https://www.cdc.gov/niosh/heat-stress/recommendations/)
+- [National Weather Service Heat Index](https://www.weather.gov/ama/heatindex)
+
+Heat Index is a screening metric. OSHA notes that WBGT is more accurate for occupational heat assessment, and NIOSH recommends WBGT for REL/RAL assessment. HeatShield does **not** currently provide a WBGT measurement, NIOSH REL/RAL determination, medical diagnosis, legal compliance determination, predictive risk, or AI-agent decision. FortyGuard `wet_bulb_temperature_c` is ordinary wet-bulb temperature and is never interpreted as WBGT.
+
 ## Tests
 
 Tests use mocked HTTP transports and do not consume FortyGuard credits:

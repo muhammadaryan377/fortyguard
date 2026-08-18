@@ -16,6 +16,7 @@ from app.models.risk import (
     WorkerContext,
     WorkloadLevel,
 )
+from app.services.heat_index_screening import screen_heat_index
 
 ENVIRONMENT_FIELDS = (
     "temperature_c",
@@ -145,6 +146,13 @@ def assess_risk(
     if rules.thresholds_configured:
         rules_applied.append("validated_occupational_thresholds")
 
+    screening = screen_heat_index(
+        environment,
+        worker,
+        task,
+        evidence_current=risk_level != "insufficient_data",
+    )
+
     return RiskAssessment(
         risk_level=risk_level,
         data_quality=quality,
@@ -162,4 +170,5 @@ def assess_risk(
             thresholds_configured=rules.thresholds_configured,
         ),
         configuration_version=rules.configuration_version,
+        screening=screening,
     )

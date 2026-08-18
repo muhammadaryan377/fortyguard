@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -85,6 +85,41 @@ class OccupationalPolicy(BaseModel):
     thresholds_configured: bool
 
 
+class ScreeningSource(BaseModel):
+    name: str
+    url: str
+
+
+class ScreeningBoundary(BaseModel):
+    band: Literal[
+        "below_caution", "caution", "extreme_caution", "danger", "extreme_danger"
+    ]
+    minimum_f: float | None
+    maximum_f: float | None
+    lower_inclusive: bool = True
+    upper_exclusive: bool = True
+
+
+class HeatIndexScreening(BaseModel):
+    status: Literal["available", "unavailable", "insufficient_data"]
+    metric: Literal["provider_heat_index"] = "provider_heat_index"
+    heat_index_c: float | None = None
+    heat_index_f: float | None = None
+    band: Literal[
+        "below_caution", "caution", "extreme_caution", "danger", "extreme_danger"
+    ] | None = None
+    full_sun_possible_upper_bound_f: float | None = None
+    sources: list[ScreeningSource]
+    policy_version: str
+    last_reviewed: date
+    threshold_basis: str
+    boundaries_f: list[ScreeningBoundary]
+    limitations: list[str]
+    contextual_flags: list[str]
+    exposure_duration_minutes: int
+    recommended_controls: list[str]
+
+
 class RiskAssessment(BaseModel):
     risk_score: float | None = None
     risk_level: Literal["configuration_required", "insufficient_data"]
@@ -99,6 +134,7 @@ class RiskAssessment(BaseModel):
     rules_applied: list[str]
     policy: OccupationalPolicy
     configuration_version: str
+    screening: HeatIndexScreening | None = None
 
 
 class RiskAssessmentRequest(StrictModel):
