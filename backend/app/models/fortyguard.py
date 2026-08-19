@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, time
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
 class StrictRequestModel(BaseModel):
@@ -18,6 +18,11 @@ class DateTimeFilter(StrictRequestModel):
     end_date: date | None = None
     start_time: time | None = None
     end_time: time | None = None
+
+    @field_serializer("start_time", "end_time", when_used="json")
+    def serialize_provider_time(self, value: time | None) -> str | None:
+        """FortyGuard accepts minute-precision times, not ISO time seconds."""
+        return value.strftime("%H:%M") if value is not None else None
 
     @model_validator(mode="after")
     def validate_filter_fields(self) -> "DateTimeFilter":
@@ -109,7 +114,11 @@ class VerifiedTemperature(BaseModel):
     longitude: float
     timestamp: str
     temperature_c: float
-    extraction_method: Literal["containing_heatmap_feature_value"]
+    extraction_method: Literal[
+        "containing_heatmap_feature_average_temperature",
+        "containing_heatmap_feature_temperature",
+        "containing_heatmap_feature_value",
+    ]
     activity_id: str
     raw: dict[str, Any] = Field(default_factory=dict)
 
@@ -121,12 +130,16 @@ class EnvironmentalProvenance(BaseModel):
     environment_activity_id: str
     requested_timestamp: str
     matched_provider_timestamp: str
+    site_timezone_name: str | None = None
+    canonical_observation_timestamp: str | None = None
     temperature_extraction_method: str
 
 
 class EnvironmentalConditions(BaseModel):
     source: Literal["fortyguard"] = "fortyguard"
     location: dict[str, Any] = Field(default_factory=dict)
+    # Provider-orchestrated evidence uses the canonical site-time instant here;
+    # the untouched provider value remains in provenance.
     timestamp: str | None = None
     temperature_c: float | None = None
     heat_index_c: float | None = None

@@ -142,7 +142,7 @@ def test_shift_act_record_preserves_validated_plan_without_external_claim():
 @pytest.mark.asyncio
 async def test_cycle_optimizer_runs_once_reuses_outlook_persists_and_verifies(monkeypatch):
     base=decision_request(); calls={"sense":0,"predict":0,"optimize":0}
-    async def fake_environment(location,date_time,*,client):
+    async def fake_environment(location,date_time,*,timezone_name,client):
         calls["sense"]+=1; return EnvironmentalConditions(timestamp=NOW.isoformat(),temperature_c=40,heat_index_c=35)
     async def fake_outlook(request,*,client,now): calls["predict"]+=1; return base.heat_outlook
     real_optimize=optimize_shift
@@ -171,7 +171,7 @@ async def test_cycle_optimizer_runs_once_reuses_outlook_persists_and_verifies(mo
 @pytest.mark.asyncio
 async def test_cycle_optimizer_failure_isolated_and_disabled_does_not_run(monkeypatch):
     base=decision_request(); calls={"optimize":0}
-    async def fake_environment(location,date_time,*,client): return EnvironmentalConditions(timestamp=NOW.isoformat(),temperature_c=40,heat_index_c=35)
+    async def fake_environment(location,date_time,*,timezone_name,client): return EnvironmentalConditions(timestamp=NOW.isoformat(),temperature_c=40,heat_index_c=35)
     async def fake_outlook(request,*,client,now): return base.heat_outlook
     def failed_optimizer(request,*,now): calls["optimize"]+=1; raise RuntimeError("internal search failure")
     monkeypatch.setattr("app.services.cycle_orchestrator.get_live_environment",fake_environment)

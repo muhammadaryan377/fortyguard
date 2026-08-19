@@ -60,7 +60,8 @@ class CycleOrchestrator:
         cycle_id, now = str(uuid4()), self.clock()
         self.store.add_audit(cycle_id, "cycle_created", {"parent_cycle_id": parent_cycle_id})
         date_time = _current_filter(now, request.timezone_name)
-        environment = await get_live_environment(request.location, date_time, client=self.client)
+        environment = await get_live_environment(request.location, date_time,
+            timezone_name=request.timezone_name, client=self.client)
         self.store.add_audit(cycle_id, "sense_completed")
         assessment = assess_risk(environment, request.worker, request.task, now=now)
         self.store.add_audit(cycle_id, "assessment_completed", {"data_quality": assessment.data_quality})
@@ -176,7 +177,8 @@ class CycleOrchestrator:
         before_assessment = RiskAssessment.model_validate(stored["response"]["current_assessment"])
         actions = self.store.get_actions(cycle_id); executed = [a for a in actions if a["status"] in {"executed", "verified"}]
         now = self.clock()
-        environment = await get_live_environment(request.location, _current_filter(now, request.timezone_name), client=self.client)
+        environment = await get_live_environment(request.location, _current_filter(now, request.timezone_name),
+            timezone_name=request.timezone_name, client=self.client)
         after_assessment = assess_risk(environment, request.worker, request.task, now=now)
         before, after = _snapshot(before_assessment), _snapshot(after_assessment)
         temp_change = after.temperature_c - before.temperature_c if None not in (after.temperature_c, before.temperature_c) else None

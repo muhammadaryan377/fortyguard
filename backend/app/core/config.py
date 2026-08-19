@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     heatshield_demo_longitude: float = -112.0740
     heatshield_max_data_age_minutes: int = 30
     heatshield_max_future_skew_minutes: int = 5
-    heatshield_site_polygon_radius_meters: float = 75.0
+    # Validated working live TCM AOI default; this is not a provider minimum.
+    heatshield_site_polygon_radius_meters: float = 300.0
     heatshield_live_granularity_meters: Literal[60, 80, 100] = 60
     heatshield_timestamp_tolerance_minutes: int = 5
     deepseek_api_key: str = ""

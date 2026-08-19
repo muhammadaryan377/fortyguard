@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from math import cos, radians
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.config import settings
 from app.models.fortyguard import (
@@ -110,16 +111,18 @@ def _point_in_ring(longitude: float, latitude: float, ring: list[list[Any]]) -> 
 
 def _feature_candidate(
     feature: Any, latitude: float, longitude: float
-) -> tuple[float, dict[str, Any]] | None:
+) -> tuple[float, dict[str, Any], str] | None:
     if not isinstance(feature, dict):
         return None
     properties = feature.get("properties")
     geometry = feature.get("geometry")
     if not isinstance(properties, dict) or not isinstance(geometry, dict):
         return None
-    # FortyGuard documents TCM tile `value` as degrees Celsius. Other numeric
-    # properties and stats aggregates are intentionally not treated as temperature.
-    value = properties.get("value")
+    # TCM uses an explicit temperature field. Generic `value` belongs to
+    # analysis heatmaps (for example exceedance/persistence hours) and must not
+    # be interpreted as degrees Celsius here.
+    field_name = "average_temperature" if "average_temperature" in properties else "temperature"
+    value = properties.get(field_name)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
     if geometry.get("type") != "Polygon":
@@ -139,7 +142,7 @@ def _feature_candidate(
         return None
     if not _point_in_ring(longitude, latitude, ring):
         return None
-    return float(value), feature
+    return float(value), feature, field_name
 
 
 def extract_verified_temperature(
@@ -162,7 +165,7 @@ def extract_verified_temperature(
     ]
     if not containing:
         raise TemperatureUnavailableError(
-            "No containing FortyGuard TCM tile supplied a documented temperature value"
+            "No containing FortyGuard TCM tile supplied average_temperature or temperature"
         )
     # Overlapping containing tiles are resolved deterministically in provider order;
     # unlike a nearest-tile fallback, every candidate spatially contains the site.
@@ -172,7 +175,7 @@ def extract_verified_temperature(
         longitude=longitude,
         timestamp=timestamp,
         temperature_c=chosen[0],
-        extraction_method="containing_heatmap_feature_value",
+        extraction_method=f"containing_heatmap_feature_{chosen[2]}",
         activity_id=activity_id,
         raw={"selected_feature": chosen[1]},
     )
@@ -216,6 +219,32 @@ def _parse_provider_timestamp(value: str | None) -> datetime | None:
     return parsed.replace(tzinfo=None)
 
 
+def canonical_observation_timestamp(provider_timestamp: str, timezone_name: str) -> datetime:
+    """Interpret a matched provider wall time in the request's site timezone."""
+    wall_time = _parse_provider_timestamp(provider_timestamp)
+    if wall_time is None:
+        raise TimestampMismatchError("Matched provider timestamp could not be canonicalized")
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise TimestampMismatchError("Site timezone is not a valid IANA timezone") from exc
+
+    # A bare wall time can name zero instants during a spring-forward gap or two
+    # instants during a fall-back fold. Fail closed instead of selecting one
+    # silently; ordinary wall times round-trip to exactly one UTC instant.
+    candidates: dict[datetime, datetime] = {}
+    for fold in (0, 1):
+        candidate = wall_time.replace(tzinfo=timezone, fold=fold)
+        instant = candidate.astimezone(UTC)
+        if instant.astimezone(timezone).replace(tzinfo=None) == wall_time:
+            candidates[instant] = candidate
+    if not candidates:
+        raise TimestampMismatchError("Matched provider timestamp is a nonexistent site-local time")
+    if len(candidates) > 1:
+        raise TimestampMismatchError("Matched provider timestamp is an ambiguous site-local time")
+    return next(iter(candidates.values()))
+
+
 def match_single_observation(
     observations: list[EnvironmentalConditions],
     *,
@@ -250,6 +279,7 @@ async def get_live_environment(
     location: USSiteLocation,
     date_time: LiveDateTimeFilter,
     *,
+    timezone_name: str,
     client: FortyGuardClient = fortyguard_client,
 ) -> EnvironmentalConditions:
     verified = await get_verified_temperature(location, date_time, client=client)
@@ -265,14 +295,19 @@ async def get_live_environment(
     selected = match_single_observation(
         observations, location=location, date_time=date_time
     )
+    raw_provider_timestamp = selected.timestamp or ""
+    canonical_timestamp = canonical_observation_timestamp(raw_provider_timestamp, timezone_name)
     selected.temperature_c = verified.temperature_c
+    selected.timestamp = canonical_timestamp.isoformat()
     selected.provenance = EnvironmentalProvenance(
         temperature_source="fortyguard_heatmap",
         environmental_parameters_source="fortyguard_env_params",
         heatmap_activity_id=verified.activity_id,
         environment_activity_id=environment_activity_id,
         requested_timestamp=verified.timestamp,
-        matched_provider_timestamp=selected.timestamp or "",
+        matched_provider_timestamp=raw_provider_timestamp,
+        site_timezone_name=timezone_name,
+        canonical_observation_timestamp=selected.timestamp,
         temperature_extraction_method=verified.extraction_method,
     )
     provider_metadata = selected.raw.get("metadata", {})

@@ -82,7 +82,8 @@ class SiteOperationsOrchestrator:
             "The site snapshot is deterministic and makes no DeepSeek calls.",
         ]
         try:
-            environment = await get_live_environment(request.location, _current_filter(now, request.timezone_name), client=self.client)
+            environment = await get_live_environment(request.location, _current_filter(now, request.timezone_name),
+                timezone_name=request.timezone_name, client=self.client)
             # Site snapshots retain typed evidence and provenance, never provider raw payloads.
             environment = environment.model_copy(update={"raw": {}})
         except Exception:

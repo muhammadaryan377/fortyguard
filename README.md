@@ -81,7 +81,7 @@ The live evidence flow is:
 ```text
 Location + requested hour
   ↓
-Small deterministic site polygon
+Deterministic site polygon using the configured live AOI radius
   ↓
 FortyGuard TCM Heatmap
   ↓
@@ -95,6 +95,8 @@ Deterministic RiskAssessment
 ```
 
 Heatmap and environmental activity IDs, requested/matched timestamps, extraction method, selected containing feature, and compact provider metadata are preserved as structured provenance. The complete heatmap FeatureCollection is not embedded in live risk responses. If a containing tile value cannot be extracted, environmental observations are absent, or timestamps cannot be matched deterministically, the request fails safely. Nearest tiles and heatmap aggregate mean/minimum/maximum statistics are never substituted for a site temperature.
+
+The default live TCM site AOI radius is `300` meters (an approximately `600 m × 600 m` square) and can be overridden with `HEATSHIELD_SITE_POLYGON_RADIUS_METERS`. This is a validated working default from controlled provider testing, not a guaranteed FortyGuard minimum AOI size.
 
 When environmental evidence is missing, stale, or materially ahead of the configured current-observation clock-skew window, the engine returns `insufficient_data`. Small clock skew is controlled by `HEATSHIELD_MAX_FUTURE_SKEW_MINUTES`. When fresh evidence exists but validated numeric occupational rules are absent, it returns `configuration_required` with a `null` risk score. Operational factors such as workload, acclimatization, direct sun, exposure duration, and PPE are reported without converting them into fabricated medical or numeric risk categories.
 

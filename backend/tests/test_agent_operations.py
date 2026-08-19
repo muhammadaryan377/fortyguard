@@ -127,7 +127,7 @@ def test_app_starts_and_operational_routes_are_registered_without_model_call():
 @pytest.mark.asyncio
 async def test_plan_verify_recheck_persist_closed_loop(monkeypatch):
     base = decision_request()
-    async def fake_environment(location, date_time, *, client):
+    async def fake_environment(location, date_time, *, timezone_name, client):
         return EnvironmentalConditions(timestamp=NOW.isoformat(), temperature_c=40.0, heat_index_c=35.0)
     async def fake_outlook(request, *, client, now):
         return base.heat_outlook

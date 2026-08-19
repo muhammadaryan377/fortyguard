@@ -50,7 +50,11 @@ def polygon_centroid(ring: list[list[float]]) -> tuple[float, float]:
 
 def _valid_tile(feature: Any, index: int, request: SpatialHeatRequest) -> tuple[int, SpatialHeatTile] | None:
     if not isinstance(feature, dict) or not isinstance(feature.get("properties"), dict) or not isinstance(feature.get("geometry"), dict): return None
-    value, geometry = feature["properties"].get("value"), feature["geometry"]
+    properties, geometry = feature["properties"], feature["geometry"]
+    # TCM tiles use an explicit Celsius temperature field. Generic `value` is
+    # reserved for analysis heatmaps and min/max are not representative values.
+    field_name = "average_temperature" if "average_temperature" in properties else "temperature"
+    value = properties.get(field_name)
     if not isinstance(value, (int, float)) or isinstance(value, bool) or geometry.get("type") != "Polygon": return None
     coordinates = geometry.get("coordinates")
     if not isinstance(coordinates, list) or not coordinates or not isinstance(coordinates[0], list): return None

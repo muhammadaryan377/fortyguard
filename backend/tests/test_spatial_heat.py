@@ -23,8 +23,8 @@ def location():
     return USSiteLocation(site_id="S1", name="Site", city="Phoenix", state="Arizona", latitude=33.4484, longitude=-112.074)
 
 
-def square(lon, lat, value, size=.0004, **properties):
-    props = {"value": value, **properties}
+def square(lon, lat, value, size=.0004, field="average_temperature", **properties):
+    props = {field: value, **properties}
     ring = [[lon-size,lat-size],[lon+size,lat-size],[lon+size,lat+size],[lon-size,lat+size],[lon-size,lat-size]]
     return {"type":"Feature","properties":props,"geometry":{"type":"Polygon","coordinates":[ring]}}
 
@@ -67,6 +67,28 @@ def test_malformed_non_numeric_equal_hotter_and_site_tiles_are_not_candidates():
         square(-112.069,33.4484,40), square(-112.067,33.4484,41)])
     assert result.status == "no_cooler_candidate" and result.candidates == []
     assert result.summary.valid_tile_count == 3
+
+
+def test_explicit_legacy_temperature_field_is_supported():
+    result = response([square(-112.074,33.4484,40,field="temperature"),
+        square(-112.070,33.4484,35,field="temperature")])
+    assert result.status == "available"
+    assert result.site_reference.site_temperature_c == 40
+    assert result.candidates[0].temperature_c == 35
+
+
+def test_value_only_analysis_feature_is_not_accepted_as_tcm_temperature():
+    result = response([square(-112.074,33.4484,40,field="value")])
+    assert result.status == "insufficient_data"
+    assert result.tiles == [] and result.site_reference.site_temperature_c is None
+
+
+def test_min_and_max_without_representative_temperature_fail_closed():
+    feature = square(-112.074,33.4484,40)
+    feature["properties"] = {"min_temperature": 35, "max_temperature": 45}
+    result = response([feature])
+    assert result.status == "insufficient_data"
+    assert result.tiles == [] and result.summary.valid_tile_count == 0
 
 
 def test_ranking_coldest_distance_provider_order_and_limit():
@@ -132,7 +154,7 @@ def test_spatial_act_record_preserves_candidate_without_movement_claim():
 @pytest.mark.asyncio
 async def test_cycle_spatial_runs_once_persists_and_failure_is_nonfatal(monkeypatch):
     base=decision_request(); calls={"spatial":0}
-    async def fake_environment(location,date_time,*,client): return EnvironmentalConditions(timestamp=NOW.isoformat(),temperature_c=40,heat_index_c=35)
+    async def fake_environment(location,date_time,*,timezone_name,client): return EnvironmentalConditions(timestamp=NOW.isoformat(),temperature_c=40,heat_index_c=35)
     async def fake_outlook(request,*,client,now): return base.heat_outlook
     async def fake_spatial(request,*,client,clock):
         calls["spatial"] += 1

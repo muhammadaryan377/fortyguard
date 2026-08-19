@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -155,6 +156,15 @@ class LiveDateTimeFilter(EnvironmentalDateTimeFilter):
 
 class LiveRiskAssessmentRequest(StrictModel):
     location: USSiteLocation
+    timezone_name: str
     date_time: LiveDateTimeFilter
     worker: WorkerContext
     task: TaskContext
+
+    @model_validator(mode="after")
+    def validate_timezone(self) -> "LiveRiskAssessmentRequest":
+        try:
+            ZoneInfo(self.timezone_name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("timezone_name must be a valid IANA timezone") from exc
+        return self

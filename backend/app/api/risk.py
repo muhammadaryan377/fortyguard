@@ -33,7 +33,8 @@ async def assess(payload: RiskAssessmentRequest) -> RiskAssessment:
 @router.post("/assess-live", response_model=RiskAssessment)
 async def assess_live(payload: LiveRiskAssessmentRequest) -> RiskAssessment:
     try:
-        environment = await get_live_environment(payload.location, payload.date_time)
+        environment = await get_live_environment(payload.location, payload.date_time,
+            timezone_name=payload.timezone_name)
         return assess_risk(environment, payload.worker, payload.task)
     except Exception as exc:
         raise _provider_error(exc) from exc

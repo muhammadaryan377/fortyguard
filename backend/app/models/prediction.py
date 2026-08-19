@@ -46,7 +46,11 @@ class ForecastTemperaturePoint(BaseModel):
     source: Literal["fortyguard_heatmap"] = "fortyguard_heatmap"
     analytic_type: Literal["tcm"] = "tcm"
     heatmap_activity_id: str | None = None
-    extraction_method: Literal["containing_heatmap_feature_value"] | None = None
+    extraction_method: Literal[
+        "containing_heatmap_feature_average_temperature",
+        "containing_heatmap_feature_temperature",
+        "containing_heatmap_feature_value",
+    ] | None = None
     error_reason: str | None = None
     selected_feature: dict | None = None
 

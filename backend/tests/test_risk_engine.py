@@ -178,6 +178,7 @@ async def test_assess_live_uses_mocked_existing_fortyguard_client(monkeypatch):
             "latitude": 33.4484,
             "longitude": -112.0740,
         },
+        "timezone_name": "America/Phoenix",
         "date_time": {
             "start_date": "2026-08-18",
             "start_time": "12:00",

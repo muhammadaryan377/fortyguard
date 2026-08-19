@@ -1,10 +1,18 @@
+import json
+from datetime import time
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
-from app.models.fortyguard import HeatmapRequest
+from app.models.fortyguard import (
+    DateTimeFilter,
+    EnvironmentalDateTimeFilter,
+    EnvironmentalParametersRequest,
+    HeatmapRequest,
+)
 from app.services.fortyguard import (
     FortyGuardAPIError,
     FortyGuardJobFailedError,
@@ -135,3 +143,51 @@ def test_api_key_is_not_in_fastapi_config_response():
     assert '"fortyguard_api_key":' not in response.text
     if settings.fortyguard_api_key:
         assert settings.fortyguard_api_key not in response.text
+
+
+def test_datetime_filter_provider_times_are_minute_precision():
+    date_time = DateTimeFilter(start_date="2026-08-19", start_time=time(19, 53, 13, 990580),
+        end_time=time(20, 5, 59, 123456), filter_type=2)
+
+    assert isinstance(date_time.start_time, time)
+    assert isinstance(date_time.end_time, time)
+    assert date_time.model_dump(mode="json") == {
+        "start_date": "2026-08-19", "filter_type": 2, "end_date": None,
+        "start_time": "19:53", "end_time": "20:05",
+    }
+
+
+def test_datetime_filter_none_end_time_and_exclude_none_are_safe():
+    date_time = DateTimeFilter(start_date="2026-08-19", start_time=time(8, 5), filter_type=1)
+
+    assert date_time.model_dump(mode="json")["end_time"] is None
+    payload = date_time.model_dump(mode="json", exclude_none=True)
+    assert payload["start_time"] == "08:05"
+    assert "end_time" not in payload
+
+
+def test_heatmap_request_payload_contains_hh_mm_only(heatmap_payload):
+    heatmap_payload["date_time"] = {
+        "start_date": "2026-08-19", "start_time": "19:53:13.990580",
+        "end_time": "20:05:59.123456", "filter_type": 2,
+    }
+    request = HeatmapRequest.model_validate(heatmap_payload)
+    payload = request.model_dump(mode="json", exclude_none=True)
+    serialized = json.dumps(payload)
+
+    assert payload["date_time"]["start_time"] == "19:53"
+    assert payload["date_time"]["end_time"] == "20:05"
+    assert "19:53:13" not in serialized and ".990580" not in serialized
+    assert isinstance(request.date_time.start_time, time)
+
+
+def test_environmental_parameters_payload_contains_hh_mm_only():
+    request = EnvironmentalParametersRequest(latitude=33.4484, longitude=-112.074,
+        temperature=41.2, date_time=EnvironmentalDateTimeFilter(start_date="2026-08-19",
+            start_time=time(19, 53, 13, 990580), filter_type=1))
+    payload = request.model_dump(mode="json", exclude_none=True)
+    serialized = json.dumps(payload)
+
+    assert payload["date_time"]["start_time"] == "19:53"
+    assert "19:53:13" not in serialized and ".990580" not in serialized
+    assert isinstance(request.date_time.start_time, time)

@@ -57,7 +57,7 @@ def heatmap_result(value: float, *, contains_site: bool = True) -> dict:
             "type": "FeatureCollection",
             "features": [{
                 "type": "Feature",
-                "properties": {"value": value},
+                "properties": {"average_temperature": value},
                 "geometry": {"type": "Polygon", "coordinates": [ring]},
             }],
         },
@@ -153,8 +153,8 @@ async def test_containing_feature_temperature_and_compact_evidence():
     forecast = outlook.points[0]
     assert forecast.status == "available"
     assert forecast.temperature_c == 41.2
-    assert forecast.extraction_method == "containing_heatmap_feature_value"
-    assert forecast.selected_feature["properties"]["value"] == 41.2
+    assert forecast.extraction_method == "containing_heatmap_feature_average_temperature"
+    assert forecast.selected_feature["properties"]["average_temperature"] == 41.2
     assert "FeatureCollection" not in outlook.model_dump_json()
     assert "stats_data" not in outlook.model_dump_json()
 
