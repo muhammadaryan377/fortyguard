@@ -288,6 +288,21 @@ button {
   cursor: pointer;
 }
 
+.analyze-button:disabled {
+  cursor: wait;
+  opacity: 0.76;
+  box-shadow: 0 7px 18px rgba(237, 36, 49, 0.12);
+}
+
+.analyze-spinner,
+.map-status-spinner {
+  animation: heatshield-spin 900ms linear infinite;
+}
+
+@keyframes heatshield-spin {
+  to { transform: rotate(360deg); }
+}
+
 .topbar-status {
   padding-left: 4px;
   display: flex;
@@ -521,24 +536,30 @@ button {
   color: #718198;
 }
 
-.live-indicator {
+.map-data-badge {
   margin-left: 6px;
+  padding: 4px 7px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #68df89;
+  border: 1px solid currentColor;
+  border-radius: 999px;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.8px;
 }
 
-.live-indicator i {
+.map-data-badge i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #4ee477;
-  box-shadow: 0 0 8px #4ee477;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
 }
+
+.provider-live { color: #68df89; background: rgba(34, 124, 62, 0.12); }
+.provider-demo { color: #ffc34d; background: rgba(142, 91, 0, 0.13); }
+.provider-loading { color: #68bfff; background: rgba(31, 103, 165, 0.14); }
 
 .map-layer-select {
   height: 33px;
@@ -584,6 +605,19 @@ button {
 
 .mock-heat-pane .mock-heat-cell {
   filter: blur(2.8px);
+}
+
+.fortyguard-heat-pane {
+  mix-blend-mode: screen;
+}
+
+.fortyguard-heat-pane .fortyguard-heat-cell {
+  transition: fill-opacity 120ms ease, stroke-opacity 120ms ease;
+}
+
+.fortyguard-heat-pane .fortyguard-heat-cell:hover {
+  fill-opacity: 0.88;
+  stroke-opacity: 0.72;
 }
 
 .heatshield-marker-shell {
@@ -636,6 +670,47 @@ button {
   color: #e7edf6;
   font-size: 9px;
 }
+
+.map-request-status {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 620;
+  width: min(360px, calc(100% - 68px));
+  pointer-events: none;
+}
+
+.map-status-card {
+  padding: 9px 11px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid rgba(114, 156, 198, 0.28);
+  border-radius: 8px;
+  color: #dce7f3;
+  background: rgba(4, 15, 27, 0.9);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(10px);
+  font-size: 9px;
+}
+
+.map-status-card > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+
+.map-status-card strong {
+  color: #f2f6fb;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.status-loading { color: #68bfff; }
+.status-error { color: #ff795f; border-color: rgba(255, 95, 70, 0.42); }
+.status-live { border-color: rgba(78, 227, 119, 0.34); }
+.status-live .status-dot { margin-top: 3px; flex: 0 0 auto; }
 
 .map-legend {
   position: absolute;
@@ -705,6 +780,21 @@ button {
 .leaflet-popup-content strong {
   color: #fff;
   font-size: 12px;
+}
+
+.heat-feature-popup {
+  min-width: 164px;
+  display: grid;
+  gap: 5px;
+}
+
+.heat-feature-popup > span {
+  color: #b9c6d6;
+}
+
+.heat-feature-popup b {
+  color: #eef5fd;
+  font-weight: 600;
 }
 
 .leaflet-popup-close-button {
@@ -1042,7 +1132,7 @@ button {
   .analyze-button { min-width: 96px; padding: 0 12px; }
   .metrics-grid { grid-template-columns: 1fr; }
   .risk-metric { grid-column: auto; }
-  .map-title .live-indicator,
+  .map-title .map-data-badge,
   .map-layer-select > svg:first-child { display: none; }
   .map-layer-select { padding: 0 8px; font-size: 8px; }
   .map-legend { right: 45px; gap: 7px; padding: 0 8px; font-size: 8px; }

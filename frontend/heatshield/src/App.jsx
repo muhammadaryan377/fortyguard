@@ -1,3 +1,4 @@
+import { useCallback, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -15,6 +16,7 @@ import {
   Hexagon,
   History,
   Leaf,
+  LoaderCircle,
   MapPinned,
   Search,
   Settings,
@@ -34,6 +36,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { fetchHeatmap } from "./api/heatshieldApi.js";
 import LiveHeatMap from "./components/map/LiveHeatMap.jsx";
 import "./App.css";
 
@@ -189,18 +192,27 @@ function Sidebar() {
   );
 }
 
-function TopBar() {
+function TopBar({ isAnalyzing, onAnalyze }) {
+  const submitAnalysis = (event) => {
+    event.preventDefault();
+    onAnalyze();
+  };
+
   return (
     <header className="topbar">
-      <form className="search-shell" onSubmit={(event) => event.preventDefault()}>
+      <form className="search-shell" onSubmit={submitAnalysis}>
         <Search size={20} aria-hidden="true" />
         <input
           aria-label="Search location, address or coordinates"
           placeholder="Search location, address or coordinates..."
         />
-        <button type="submit" className="analyze-button">
-          <Search size={17} />
-          Analyze
+        <button type="submit" className="analyze-button" disabled={isAnalyzing}>
+          {isAnalyzing ? (
+            <LoaderCircle className="analyze-spinner" size={17} aria-hidden="true" />
+          ) : (
+            <Search size={17} aria-hidden="true" />
+          )}
+          {isAnalyzing ? "Analyzing..." : "Analyze"}
         </button>
       </form>
 
@@ -398,11 +410,67 @@ function RecommendedActions() {
 }
 
 function App() {
+  const requestInFlight = useRef(false);
+  const [heatmapState, setHeatmapState] = useState({
+    phase: "demo",
+    activityId: null,
+    providerStatus: null,
+    mapData: null,
+    featureCount: 0,
+    request: null,
+    error: null,
+  });
+
+  const analyzePhoenix = useCallback(async () => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    setHeatmapState({
+      phase: "loading",
+      activityId: null,
+      providerStatus: null,
+      mapData: null,
+      featureCount: 0,
+      request: null,
+      error: null,
+    });
+
+    try {
+      const result = await fetchHeatmap();
+      setHeatmapState({
+        phase: "live",
+        activityId: result.activityId,
+        providerStatus: result.status,
+        mapData: result.mapData,
+        featureCount: result.featureCount,
+        request: result.request,
+        error: null,
+      });
+    } catch (error) {
+      setHeatmapState({
+        phase: "error",
+        activityId: null,
+        providerStatus: null,
+        mapData: null,
+        featureCount: 0,
+        request: null,
+        error:
+          error instanceof Error && error.message
+            ? error.message
+            : "Unable to load live heat intelligence.",
+      });
+    } finally {
+      requestInFlight.current = false;
+    }
+  }, []);
+
   return (
     <div className="app-shell">
       <Sidebar />
       <main className="dashboard-main">
-        <TopBar />
+        <TopBar
+          isAnalyzing={heatmapState.phase === "loading"}
+          onAnalyze={analyzePhoenix}
+        />
 
         <section className="metrics-grid" aria-label="Current heat metrics">
           <RiskMetric />
@@ -412,7 +480,7 @@ function App() {
         </section>
 
         <div className="content-grid">
-          <LiveHeatMap />
+          <LiveHeatMap heatmapState={heatmapState} />
           <AiRiskAnalysis />
           <ForecastChart />
           <RecommendedActions />
