@@ -9,6 +9,7 @@ from app.api.agent import router as agent_router
 from app.api.cycle import router as cycle_router
 from app.api.spatial import router as spatial_router
 from app.api.optimize import router as optimize_router
+from app.api.site import router as site_router
 
 
 logging.basicConfig(
@@ -37,6 +38,7 @@ app.include_router(agent_router, prefix="/api")
 app.include_router(cycle_router, prefix="/api")
 app.include_router(spatial_router, prefix="/api")
 app.include_router(optimize_router, prefix="/api")
+app.include_router(site_router, prefix="/api")
 
 
 @app.get("/")

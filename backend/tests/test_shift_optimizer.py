@@ -182,5 +182,7 @@ async def test_cycle_optimizer_failure_isolated_and_disabled_does_not_run(monkey
     disabled=await orchestrator.plan(HeatShieldCycleRequest(**common))
     assert calls["optimize"] == 0 and disabled.shift_optimization is None
     enabled=await orchestrator.plan(HeatShieldCycleRequest(**common,include_shift_optimization=True,shift_tasks=[task()]))
-    assert calls["optimize"] == 1 and enabled.shift_optimization.status == "no_feasible_plan"
+    assert calls["optimize"] == 1 and enabled.shift_optimization.status == "optimizer_unavailable"
+    assert enabled.shift_optimization.best_candidate is None and enabled.shift_optimization.candidates == []
+    assert "shift_optimization_unavailable" in [event["event_type"] for event in orchestrator.store.audit]
     assert enabled.current_assessment is not None and enabled.heat_outlook is not None

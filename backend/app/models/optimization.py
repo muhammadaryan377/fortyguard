@@ -108,7 +108,7 @@ class CurrentShiftPlanSummary(BaseModel):
 
 
 class ShiftOptimizationResponse(BaseModel):
-    status: Literal["available", "no_better_plan", "no_feasible_plan", "insufficient_forecast"]
+    status: Literal["available", "no_better_plan", "no_feasible_plan", "insufficient_forecast", "optimizer_unavailable"]
     worker_id: str
     generated_at: datetime
     source: Literal["fortyguard_predict_samples"] = "fortyguard_predict_samples"

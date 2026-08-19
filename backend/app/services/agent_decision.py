@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from app.core.config import settings
 from app.models.operations import AgentAction, AgentDecisionRequest, AgentDecisionResponse, AgentEvidence, AgentToolTrace
+from app.models.prediction import PredictHeatOutlookResponse
+from app.models.risk import RiskAssessment
 from app.services.agent_model import AGENT_TOOLS, AgentModel, AgentModelError, DeepSeekAgentModel, ModelToolCall
 
 LIMITATIONS = [
@@ -15,6 +17,7 @@ LIMITATIONS = [
     "Every proposed action requires explicit human approval before execution.",
     "A cooler sampled period candidate is not a safe-time or continuous-period minimum claim.",
     "This decision is not medical advice or a legal compliance determination.",
+    "The direct agent endpoint validates typed evidence but does not independently prove its provenance. Use the HeatShield cycle/site orchestration paths when provider-fetched evidence integrity is required.",
 ]
 TOOL_ACTION = {
     "propose_cool_recovery": "cool_recovery",
@@ -25,6 +28,26 @@ TOOL_ACTION = {
     "request_supervisor_review": "supervisor_review",
     "propose_cooler_zone_candidate": "consider_cooler_zone",
     "propose_shift_plan_candidate": "consider_shift_plan",
+}
+CAPABILITY_LABELS = {
+    "propose_cool_recovery": "cool_recovery",
+    "propose_reduce_physical_demands": "reduce_physical_demands",
+    "propose_cooler_sampled_period": "cooler_sampled_period",
+    "propose_worker_monitoring": "worker_monitoring",
+    "propose_limit_direct_sun": "limit_direct_sun",
+    "request_supervisor_review": "supervisor_review",
+    "propose_cooler_zone_candidate": "cooler_zone",
+    "propose_shift_plan_candidate": "shift_plan",
+}
+ACTION_EVIDENCE_REFS = {
+    "cool_recovery": ["current_assessment"],
+    "reduce_physical_demands": ["current_assessment"],
+    "increase_monitoring": ["current_assessment"],
+    "limit_direct_sun": ["current_assessment"],
+    "consider_cooler_sampled_period": ["current_assessment", "heat_outlook"],
+    "consider_cooler_zone": ["current_assessment", "spatial_heat"],
+    "consider_shift_plan": ["current_assessment", "heat_outlook", "shift_optimization"],
+    "supervisor_review": ["current_assessment"],
 }
 
 
@@ -136,12 +159,31 @@ def _eligibility(tool: str, evidence: AgentEvidence, spatial_heat=None, shift_op
     return False, "unsupported_tool", {}
 
 
+def available_agent_capabilities(assessment: RiskAssessment, outlook: PredictHeatOutlookResponse | None,
+                                 spatial_heat=None, shift_optimization=None) -> list[str]:
+    """Preview existing tool categories without invoking an agent model."""
+    if outlook is not None:
+        evidence = build_agent_evidence(AgentDecisionRequest(current_assessment=assessment,
+            heat_outlook=outlook, spatial_heat=spatial_heat, shift_optimization=shift_optimization))
+    else:
+        screen = assessment.screening
+        evidence = AgentEvidence(current={
+            "recommended_controls": screen.recommended_controls if screen else [],
+            "contextual_flags": screen.contextual_flags if screen else [],
+            "temperature_c": assessment.environmental_evidence.temperature_c,
+        }, forecast={"available_samples": []})
+    return [CAPABILITY_LABELS[tool] for tool in TOOL_ACTION
+            if _eligibility(tool, evidence, spatial_heat, shift_optimization)[0]]
+
+
 async def decide(request: AgentDecisionRequest, *, model: AgentModel | None = None, now: datetime | None = None) -> AgentDecisionResponse:
     evidence = build_agent_evidence(request)
     decision_id, generated = str(uuid4()), (now or datetime.now(UTC)).astimezone(UTC)
     base = dict(decision_id=decision_id, generated_at=generated, model=settings.heatshield_agent_model,
         worker_id=evidence.current["worker_id"], task_id=evidence.current["task_id"],
         current_evidence_summary=evidence.current, forecast_evidence_summary=evidence.forecast,
+        spatial_evidence_summary=evidence.spatial,
+        shift_optimization_evidence_summary=evidence.shift_optimization,
         policy_version=evidence.current["policy_version"], limitations=LIMITATIONS)
     screening_status = evidence.current.get("screening_status")
     if request.current_assessment.risk_level == "insufficient_data" or screening_status == "insufficient_data":
@@ -171,7 +213,7 @@ async def decide(request: AgentDecisionRequest, *, model: AgentModel | None = No
         action_id = str(uuid4())
         action = AgentAction(action_id=action_id, action_type=action_type, tool_name=call.name,
             worker_id=evidence.current["worker_id"], task_id=evidence.current["task_id"],
-            reason_codes=[reason], evidence_refs=["current_assessment", "heat_outlook"] if details else ["current_assessment"], details=details)
+            reason_codes=[reason], evidence_refs=ACTION_EVIDENCE_REFS[action_type], details=details)
         actions.append(action); trace.append(AgentToolTrace(tool_name=call.name, status="accepted", safe_reason=reason, action_id=action_id))
         if action_type != "supervisor_review": operational_count += 1
     return AgentDecisionResponse(status="decided" if actions else "no_action_selected", actions=actions, tool_trace=trace, **base)

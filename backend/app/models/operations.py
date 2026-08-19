@@ -72,6 +72,8 @@ class AgentDecisionResponse(BaseModel):
     tool_trace: list[AgentToolTrace]
     current_evidence_summary: dict[str, Any]
     forecast_evidence_summary: dict[str, Any]
+    spatial_evidence_summary: dict[str, Any] | None = None
+    shift_optimization_evidence_summary: dict[str, Any] | None = None
     policy_version: str
     requires_human_approval: Literal[True] = True
     limitations: list[str]

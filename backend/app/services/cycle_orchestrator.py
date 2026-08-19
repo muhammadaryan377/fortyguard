@@ -91,11 +91,14 @@ class CycleOrchestrator:
                 optimization = optimize_shift(ShiftOptimizationRequest(worker_id=request.worker.worker_id,
                     heat_outlook=outlook, tasks=request.shift_tasks or []), now=now)
             except Exception:
-                optimization = ShiftOptimizationResponse(status="no_feasible_plan", worker_id=request.worker.worker_id,
+                optimization = ShiftOptimizationResponse(status="optimizer_unavailable", worker_id=request.worker.worker_id,
                     generated_at=now, sample_offsets_considered=[],
-                    current_plan=CurrentShiftPlanSummary(status="unavailable", safe_reason="Shift optimization could not produce a validated plan."),
-                    candidates=[], limitations=["No schedule was fabricated after optimization failure."])
-            event = "shift_optimization_completed" if optimization.status == "available" else "shift_optimization_no_better_plan" if optimization.status == "no_better_plan" else "shift_optimization_no_feasible_plan"
+                    current_plan=CurrentShiftPlanSummary(status="unavailable", safe_reason="Shift optimization was unavailable."),
+                    candidates=[], best_candidate=None, limitations=["Shift optimization was unavailable; no schedule candidate was fabricated."])
+            event = ("shift_optimization_completed" if optimization.status == "available" else
+                "shift_optimization_no_better_plan" if optimization.status == "no_better_plan" else
+                "shift_optimization_unavailable" if optimization.status == "optimizer_unavailable" else
+                "shift_optimization_no_feasible_plan")
             self.store.add_audit(cycle_id, event, {"candidate_count": len(optimization.candidates),
                 "best_planning_index": optimization.best_candidate.sampled_temperature_minutes_index if optimization.best_candidate else None,
                 "comparison_index": optimization.best_candidate.difference_vs_current_temperature_minutes_index if optimization.best_candidate else None})

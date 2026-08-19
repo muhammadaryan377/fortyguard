@@ -377,6 +377,47 @@ cd backend
 python -m pytest -q
 ```
 
+## MULTI-WORKER SITE INTELLIGENCE — Phase 1
+
+The supervisor snapshot path shares site-level evidence instead of multiplying provider calls by worker count:
+
+```text
+ONE shared current environment  -> MANY worker assessments
+ONE shared PREDICT outlook      -> MANY worker planning contexts
+ONE shared SPATIAL query        -> site map intelligence
+NO automatic DeepSeek fan-out
+
+Supervisor selects one worker   -> fresh individual /api/cycle/plan
+                                 -> constrained agent decision
+                                 -> human approval -> ACT -> VERIFY -> RECHECK
+```
+
+Endpoints:
+
+- `POST /api/site/operations-snapshot` creates and stores a deterministic 1–25 worker snapshot.
+- `GET /api/site/operations-snapshot/{snapshot_id}` reloads it without provider or DeepSeek calls and reports `age_seconds`.
+- `POST /api/site/operations-snapshot/{snapshot_id}/worker/{worker_id}/cycle-request` returns a validated request for a selected worker; it does not run a cycle or treat stored evidence as fresh.
+
+The POST performs exactly one shared current-environment fetch. PREDICT is invoked once but normally attempts one FortyGuard heatmap per requested forecast offset (five with the defaults). SPATIAL, when enabled, is invoked once. Shift optimization reuses the shared outlook and makes no provider calls. `provider_usage` exposes all attempted current, forecast, spatial, assessment, optimization, and DeepSeek counts; `deepseek_calls` is always zero for this endpoint.
+
+Workers are grouped only by the existing provider Heat Index screening result: evidence gap, extreme danger, danger, extreme caution, caution, below caution, then screening unavailable. Worker IDs sort ascending inside each group. **Operational attention ordering is not a total occupational heat-risk score.** Workload, direct sun, acclimatization, and exposure duration remain contextual evidence; they are not assigned invented weights.
+
+Stored snapshots are historical views. GET never refreshes provider data or silently declares an older snapshot invalid; clients should display `generated_at` and `age_seconds`. Selecting a worker produces a request whose later submission to `/api/cycle/plan` performs fresh SENSE/PREDICT and optional SPATIAL work.
+
+Swagger includes a Phoenix example with three assignments: heavy direct-sun roof material handling, moderate outdoor equipment inspection, and an acclimatized light gate-records task. A compact request follows:
+
+```json
+{
+  "location": {"site_id":"PHX-01","name":"Phoenix Operations Site","city":"Phoenix","state":"Arizona","latitude":33.4484,"longitude":-112.074},
+  "timezone_name": "America/Phoenix",
+  "assignments": [
+    {"display_label":"Roof crew","worker":{"worker_id":"W-001","site_id":"PHX-01","acclimatized":false},"task":{"task_id":"T-ROOF","task_name":"Roof material handling","workload_level":"heavy","exposure_duration_minutes":90,"outdoor":true,"direct_sun":true}},
+    {"display_label":"Yard inspection","worker":{"worker_id":"W-002","site_id":"PHX-01","acclimatized":true},"task":{"task_id":"T-YARD","task_name":"Outdoor equipment inspection","workload_level":"moderate","exposure_duration_minutes":60,"outdoor":true,"direct_sun":false}},
+    {"display_label":"Gate records","worker":{"worker_id":"W-003","site_id":"PHX-01","acclimatized":true},"task":{"task_id":"T-GATE","task_name":"Gate inventory records","workload_level":"light","exposure_duration_minutes":45,"outdoor":true,"direct_sun":false}}
+  ]
+}
+```
+
 ## Provider schema source
 
 Request and result fields are based on the official FortyGuard documentation:

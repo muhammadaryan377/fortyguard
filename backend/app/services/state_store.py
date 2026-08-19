@@ -25,6 +25,8 @@ class HeatShieldStateStore(Protocol):
     def get_operational_record(self, action_id: str) -> dict[str, Any] | None: ...
     def add_audit(self, cycle_id: str, event_type: str, details: dict[str, Any] | None = None) -> dict[str, Any]: ...
     def get_audit(self, cycle_id: str) -> list[dict[str, Any]]: ...
+    def save_site_snapshot(self, snapshot_id: str, generated_at: str, payload: dict[str, Any]) -> None: ...
+    def get_site_snapshot(self, snapshot_id: str) -> dict[str, Any] | None: ...
 
 
 class _ClosingConnection(sqlite3.Connection):
@@ -58,6 +60,7 @@ class SQLiteHeatShieldStateStore:
             CREATE TABLE IF NOT EXISTS operational_records (action_id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS verifications (id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS audit_events (id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL, timestamp TEXT NOT NULL, event_type TEXT NOT NULL, details TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS site_snapshots (id TEXT PRIMARY KEY, generated_at TEXT NOT NULL, payload TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS audit_cycle_time ON audit_events(cycle_id, timestamp);
             """)
 
@@ -117,10 +120,20 @@ class SQLiteHeatShieldStateStore:
             rows = db.execute("SELECT * FROM audit_events WHERE cycle_id=? ORDER BY timestamp, rowid", (cycle_id,)).fetchall()
         return [{"event_id": row["id"], "cycle_id": cycle_id, "timestamp": row["timestamp"], "event_type": row["event_type"], "safe_details": json.loads(row["details"])} for row in rows]
 
+    def save_site_snapshot(self, snapshot_id: str, generated_at: str, payload: dict[str, Any]) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO site_snapshots VALUES (?, ?, ?)",
+                       (snapshot_id, generated_at, json.dumps(payload)))
+
+    def get_site_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT payload FROM site_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
 
 class InMemoryHeatShieldStateStore:
     def __init__(self) -> None:
-        self.cycles: dict[str, dict] = {}; self.decisions: dict[str, dict] = {}; self.actions: dict[str, dict] = {}; self.records: dict[str, dict] = {}; self.verifications: dict[str, dict] = {}; self.audit: list[dict] = []
+        self.cycles: dict[str, dict] = {}; self.decisions: dict[str, dict] = {}; self.actions: dict[str, dict] = {}; self.records: dict[str, dict] = {}; self.verifications: dict[str, dict] = {}; self.audit: list[dict] = []; self.site_snapshots: dict[str, dict] = {}
     def save_cycle(self, cycle_id, payload): self.cycles[cycle_id] = json.loads(json.dumps(payload))
     def get_cycle(self, cycle_id): return self.cycles.get(cycle_id)
     def save_decision(self, decision_id, cycle_id, payload): self.decisions[decision_id] = {"cycle_id": cycle_id, "payload": json.loads(json.dumps(payload))}
@@ -135,3 +148,5 @@ class InMemoryHeatShieldStateStore:
     def add_audit(self, cycle_id, event_type, details=None):
         event={"event_id":str(uuid4()),"cycle_id":cycle_id,"timestamp":datetime.now(UTC).isoformat(),"event_type":event_type,"safe_details":details or {}}; self.audit.append(event); return event
     def get_audit(self, cycle_id): return [e for e in self.audit if e["cycle_id"] == cycle_id]
+    def save_site_snapshot(self, snapshot_id, generated_at, payload): self.site_snapshots[snapshot_id] = json.loads(json.dumps(payload))
+    def get_site_snapshot(self, snapshot_id): return self.site_snapshots.get(snapshot_id)
