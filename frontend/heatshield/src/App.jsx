@@ -1,14 +1,18 @@
-import { useCallback, useRef, useState } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
 import {
   Activity,
   AlertTriangle,
   ArrowRight,
   Bell,
   BrainCircuit,
-  Building2,
   CheckCircle2,
-  ChevronDown,
-  Clock3,
+  ChevronRight,
   Droplets,
   FileChartColumn,
   Flame,
@@ -18,173 +22,305 @@ import {
   Leaf,
   LoaderCircle,
   MapPinned,
+  Radar,
   Search,
   Settings,
   Shield,
+  ShieldCheck,
+  Sparkles,
   SunMedium,
   ThermometerSun,
   Trees,
   Wind,
+  Zap,
 } from "lucide-react";
+
 import {
   Area,
   AreaChart,
   CartesianGrid,
-  ReferenceDot,
-  ReferenceLine,
   ResponsiveContainer,
+  Tooltip as ChartTooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { fetchHeatmap } from "./api/heatshieldApi.js";
+
+import {
+  deriveHeatIndexBand,
+  fetchCyclePlan,
+  fetchEnvironmentForHeatmap,
+  fetchHeatmap,
+  formatScreeningBand,
+  getCurrentPhoenixDateTimeFilter,
+  parseLocationInput,
+  PHOENIX_LOCATION,
+  VERIFIED_REPLAY_DATETIME,
+  VERIFIED_SNAPSHOT_FILTER,
+} from "./api/heatshieldApi.js";
+
 import LiveHeatMap from "./components/map/LiveHeatMap.jsx";
+
 import "./App.css";
 
+
 const navigation = [
-  { label: "Dashboard", icon: Grid2X2, active: true },
-  { label: "Map Analysis", icon: MapPinned },
-  { label: "Risk Reports", icon: FileChartColumn },
-  { label: "History", icon: History },
-  { label: "Alerts", icon: Bell },
-  { label: "Recommendations", icon: CheckCircle2 },
-  { label: "Settings", icon: Settings },
-];
-
-const metrics = [
   {
-    title: "Temperature",
-    value: "33.1",
-    unit: "°C",
-    detail: "Surface Temp",
-    icon: ThermometerSun,
-    tone: "orange",
+    label: "Dashboard",
+    icon: Grid2X2,
+    active: true,
   },
   {
-    title: "Heat Index",
-    value: "34.6",
-    unit: "°C",
-    detail: "Feels Like",
-    icon: SunMedium,
-    tone: "amber",
+    label: "Map Analysis",
+    icon: MapPinned,
   },
   {
-    title: "Humidity",
-    value: "42.7",
-    unit: "%",
-    detail: "Relative Humidity",
-    icon: Droplets,
-    tone: "cyan",
+    label: "Risk Reports",
+    icon: FileChartColumn,
   },
   {
-    title: "Wet Bulb Temp",
-    value: "19.9",
-    unit: "°C",
-    detail: "Thermal Stress",
-    icon: Wind,
-    tone: "blue",
+    label: "History",
+    icon: History,
+  },
+  {
+    label: "Alerts",
+    icon: Bell,
+  },
+  {
+    label: "Recommendations",
+    icon: CheckCircle2,
+  },
+  {
+    label: "Settings",
+    icon: Settings,
   },
 ];
 
-const forecast = [
-  { hour: 0, temperature: 23.6 },
-  { hour: 2, temperature: 21.1 },
-  { hour: 4, temperature: 19.4 },
-  { hour: 6, temperature: 21.6 },
-  { hour: 8, temperature: 25.2 },
-  { hour: 10, temperature: 30.8 },
-  { hour: 12, temperature: 34.7 },
-  { hour: 14, temperature: 36.2 },
-  { hour: 16, temperature: 35.1 },
-  { hour: 18, temperature: 33.2 },
-  { hour: 20, temperature: 29.7 },
-  { hour: 22, temperature: 26.4 },
-  { hour: 24, temperature: 23.8 },
-];
 
-const timeLabels = {
-  0: "12 AM",
-  4: "4 AM",
-  8: "8 AM",
-  12: "12 PM",
-  16: "4 PM",
-  20: "8 PM",
-  24: "12 AM",
+const actionNames = {
+  cool_recovery:
+    "Move to a cool recovery area",
+
+  reduce_physical_demands:
+    "Reduce physical workload",
+
+  consider_cooler_sampled_period:
+    "Consider a cooler sampled period",
+
+  increase_monitoring:
+    "Increase worker monitoring",
+
+  limit_direct_sun:
+    "Limit direct sun exposure",
+
+  supervisor_review:
+    "Request supervisor review",
+
+  consider_cooler_zone:
+    "Consider a cooler nearby zone",
+
+  consider_shift_plan:
+    "Consider optimized shift plan",
 };
 
-const recommendedActions = [
-  {
-    title: "Increase shade coverage in high exposure areas",
-    description: "Prioritize trees and shade structures",
-    icon: Trees,
-    tone: "green",
-  },
-  {
-    title: "Use reflective or cool roof materials",
-    description: "Reduce heat absorption from buildings",
-    icon: Building2,
-    tone: "blue",
-  },
-  {
-    title: "Schedule outdoor activities smartly",
-    description: "Avoid peak heat hours (1 PM - 5 PM)",
-    icon: Clock3,
-    tone: "yellow",
-  },
-];
+
+function numberOrNull(value) {
+  return (
+    typeof value ===
+      "number" &&
+    Number.isFinite(value)
+      ? value
+      : null
+  );
+}
+
+
+function formatMetric(
+  value,
+  digits = 1,
+) {
+  const numeric =
+    numberOrNull(value);
+
+  return (
+    numeric === null
+      ? "--"
+      : numeric.toFixed(
+          digits,
+        )
+  );
+}
+
+
+function humanize(value) {
+  if (!value) {
+    return "Unavailable";
+  }
+
+  return String(value)
+    .replaceAll(
+      "_",
+      " ",
+    )
+    .replace(
+      /\b\w/g,
+      (letter) =>
+        letter.toUpperCase(),
+    );
+}
+
 
 function Brand() {
   return (
-    <div className="brand" aria-label="HeatShield Urban Heat Intelligence">
-      <div className="brand-mark" aria-hidden="true">
-        <Shield size={40} strokeWidth={1.8} />
-        <Flame className="brand-flame" size={18} fill="currentColor" />
+    <div className="brand">
+      <div className="brand-mark">
+        <Shield
+          size={39}
+          strokeWidth={1.8}
+        />
+
+        <Flame
+          className="brand-flame"
+          size={18}
+          fill="currentColor"
+        />
       </div>
+
       <div>
         <div className="brand-name">
-          <span>Heat</span>Shield
+          <span>
+            Heat
+          </span>
+
+          Shield
         </div>
-        <div className="brand-subtitle">Urban Heat Intelligence</div>
+
+        <div className="brand-subtitle">
+          Urban Heat Intelligence
+        </div>
       </div>
     </div>
   );
 }
 
-function Sidebar() {
+
+function Sidebar({
+  systemState,
+}) {
+  const statusLabel =
+    systemState ===
+    "loading"
+      ? "Analysis Running"
+
+      : systemState ===
+          "connected"
+        ? "Live Pipeline Connected"
+
+        : systemState ===
+            "replay"
+          ? "Historical Replay"
+
+          : systemState ===
+              "partial"
+            ? "Partial Evidence"
+
+            : systemState ===
+                "error"
+              ? "Needs Attention"
+
+              : "Ready";
+
   return (
     <aside className="sidebar">
       <Brand />
 
-      <nav className="sidebar-nav" aria-label="Primary navigation">
-        {navigation.map(({ label, icon: Icon, active }) => (
-          <button
-            className={`nav-item ${active ? "active" : ""}`}
-            key={label}
-            type="button"
-            aria-current={active ? "page" : undefined}
-          >
-            <Icon size={20} strokeWidth={1.8} />
-            <span>{label}</span>
-          </button>
-        ))}
+      <nav className="sidebar-nav">
+        {navigation.map(
+          ({
+            label,
+            icon: Icon,
+            active,
+          }) => (
+            <button
+              type="button"
+              key={label}
+              className={
+                `nav-item ${
+                  active
+                    ? "active"
+                    : ""
+                }`
+              }
+            >
+              <Icon
+                size={19}
+                strokeWidth={1.8}
+              />
+
+              <span>
+                {label}
+              </span>
+
+              {active ? (
+                <ChevronRight
+                  size={15}
+                  className="nav-arrow"
+                />
+              ) : null}
+            </button>
+          ),
+        )}
       </nav>
 
       <div className="sidebar-footer">
         <div className="provider-card">
-          <div className="provider-icon" aria-hidden="true">
-            <Hexagon size={31} />
+          <div className="provider-icon">
+            <Hexagon
+              size={30}
+            />
+
             <span />
           </div>
+
           <div>
-            <small>Powered by</small>
-            <strong>FortyGuard</strong>
+            <small>
+              Powered by
+            </small>
+
+            <strong>
+              FortyGuard
+            </strong>
+          </div>
+        </div>
+
+        <div className="agent-provider-card">
+          <BrainCircuit
+            size={19}
+          />
+
+          <div>
+            <small>
+              Decision agent
+            </small>
+
+            <strong>
+              DeepSeek
+            </strong>
           </div>
         </div>
 
         <div className="system-card">
-          <strong>System Status</strong>
-          <div className="system-state">
+          <strong>
+            System Status
+          </strong>
+
+          <div
+            className={
+              `system-state system-${systemState}`
+            }
+          >
             <span className="status-dot" />
-            All Systems Operational
+
+            {statusLabel}
           </div>
         </div>
       </div>
@@ -192,302 +328,2038 @@ function Sidebar() {
   );
 }
 
-function TopBar({ isAnalyzing, onAnalyze }) {
-  const submitAnalysis = (event) => {
-    event.preventDefault();
-    onAnalyze();
-  };
+
+function TopBar({
+  value,
+  onChange,
+  onAnalyze,
+  isAnalyzing,
+  environment,
+}) {
+  const temperature =
+    environment
+      ?.temperature_c;
 
   return (
     <header className="topbar">
-      <form className="search-shell" onSubmit={submitAnalysis}>
-        <Search size={20} aria-hidden="true" />
-        <input
-          aria-label="Search location, address or coordinates"
-          placeholder="Search location, address or coordinates..."
+      <form
+        className="search-shell"
+        onSubmit={(
+          event,
+        ) => {
+          event.preventDefault();
+
+          onAnalyze();
+        }}
+      >
+        <Search
+          size={19}
         />
-        <button type="submit" className="analyze-button" disabled={isAnalyzing}>
+
+        <input
+          value={value}
+          onChange={(
+            event,
+          ) =>
+            onChange(
+              event.target.value,
+            )
+          }
+          aria-label="Analyze Phoenix location or coordinates"
+          placeholder="Phoenix or 33.4484, -112.0740"
+        />
+
+        <button
+          type="submit"
+          className="analyze-button"
+          disabled={
+            isAnalyzing
+          }
+        >
           {isAnalyzing ? (
-            <LoaderCircle className="analyze-spinner" size={17} aria-hidden="true" />
+            <LoaderCircle
+              className="spinner"
+              size={17}
+            />
           ) : (
-            <Search size={17} aria-hidden="true" />
+            <Zap
+              size={17}
+            />
           )}
-          {isAnalyzing ? "Analyzing..." : "Analyze"}
+
+          {isAnalyzing
+            ? "Analyzing..."
+            : "Analyze"}
         </button>
       </form>
 
       <div className="topbar-status">
-        <SunMedium className="weather-icon" size={34} />
-        <div className="weather-copy">
-          <strong>33°C</strong>
-          <span>Clear Sky</span>
+        <div className="weather-orb">
+          <SunMedium
+            size={24}
+          />
         </div>
-        <button className="avatar" type="button" aria-label="Open HeatShield user menu">
+
+        <div className="weather-copy">
+          <strong>
+            {formatMetric(
+              temperature,
+            )}
+
+            {numberOrNull(
+              temperature,
+            ) !== null
+              ? "°C"
+              : ""}
+          </strong>
+
+          <span>
+            Provider temperature
+          </span>
+        </div>
+
+        <div className="avatar">
           HS
-        </button>
-        <ChevronDown className="avatar-chevron" size={17} />
+        </div>
       </div>
     </header>
   );
 }
 
-function RiskMetric() {
+
+function MetricCard({
+  title,
+  value,
+  unit,
+  detail,
+  icon: Icon,
+  tone,
+  provider = false,
+}) {
   return (
-    <article className="metric-card risk-metric">
-      <div className="metric-heading">Heat Risk Score</div>
-      <div className="risk-value-row">
-        <div className="metric-value risk-value">
-          82 <span>/ 100</span>
-        </div>
-        <svg className="sparkline" viewBox="0 0 116 45" role="img" aria-label="Heat risk trend rising">
-          <defs>
-            <linearGradient id="sparkGlow" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0" stopColor="#ff3d2e" />
-              <stop offset="1" stopColor="#ffb000" />
-            </linearGradient>
-          </defs>
-          <path d="M2 39 L16 31 L27 34 L41 25 L56 24 L68 17 L84 18 L94 27 L103 12 L114 6" />
-        </svg>
+    <article
+      className={
+        `metric-card metric-${tone}`
+      }
+    >
+      <div className="metric-topline">
+        <span className="metric-heading">
+          {title}
+        </span>
+
+        {provider ? (
+          <span className="provider-mini">
+            FG
+          </span>
+        ) : null}
       </div>
-      <div className="risk-status">
-        <AlertTriangle size={15} />
-        Extreme Caution
+
+      <div className="metric-body">
+        <div>
+          <div className="metric-value">
+            {value}
+
+            {value !==
+            "--" ? (
+              <span>
+                {unit}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="metric-detail">
+            {detail}
+          </div>
+        </div>
+
+        <div
+          className={
+            `metric-icon icon-${tone}`
+          }
+        >
+          <Icon
+            size={25}
+          />
+        </div>
       </div>
     </article>
   );
 }
 
-function MetricCard({ title, value, unit, detail, icon: Icon, tone }) {
+
+function RiskCard({
+  assessment,
+  environment,
+  analysisMode,
+}) {
+  const backendScreening =
+    assessment
+      ?.screening;
+
+  const fallbackBand =
+    deriveHeatIndexBand(
+      environment
+        ?.heat_index_c,
+    );
+
+  const band =
+    backendScreening
+      ?.band ??
+    fallbackBand;
+
+  const riskScore =
+    numberOrNull(
+      assessment
+        ?.risk_score,
+    );
+
+  const configurationText =
+    assessment
+      ? humanize(
+          assessment
+            .risk_level,
+        )
+
+      : environment
+        ? "Provider evidence available"
+
+        : "Awaiting analysis";
+
   return (
-    <article className={`metric-card metric-${tone}`}>
-      <div className="metric-copy">
-        <div className="metric-heading">{title}</div>
-        <div className="metric-value">
-          {value}<span>{unit}</span>
+    <article className="metric-card risk-card">
+      <div className="metric-topline">
+        <span className="metric-heading">
+          Heat Risk
+        </span>
+
+        <ShieldCheck
+          size={18}
+        />
+      </div>
+
+      <div className="risk-main">
+        <div className="risk-score">
+          {riskScore ===
+          null
+            ? "--"
+            : Math.round(
+                riskScore,
+              )}
+
+          <span>
+            / 100
+          </span>
         </div>
-        <div className="metric-detail">{detail}</div>
-      </div>
-      <div className={`metric-icon icon-${tone}`} aria-hidden="true">
-        <Icon size={27} strokeWidth={1.8} />
-      </div>
-    </article>
-  );
-}
 
-function AiRiskAnalysis() {
-  return (
-    <section className="panel ai-panel">
-      <div className="panel-title-row">
-        <h2>AI Risk Analysis</h2>
-        <div className="ai-icon" aria-hidden="true">
-          <BrainCircuit size={26} />
-        </div>
-      </div>
-      <div className="title-accent" />
-
-      <p className="analysis-copy">
-        This area experiences very high heat exposure due to dense built environment, low
-        vegetation, and high heat-retaining surfaces.
-      </p>
-
-      <div className="drivers-card">
-        <h3>Key Drivers</h3>
-        <ul>
-          <li>High surface temperature</li>
-          <li>Low vegetation cover</li>
-          <li>Urban heat island effect</li>
-        </ul>
-      </div>
-
-      <div className="confidence-block">
-        <div className="confidence-label">
-          <span>Confidence</span>
-          <strong>92%</strong>
-        </div>
-        <div className="confidence-track">
+        <div className="risk-pulse">
+          <span />
+          <span />
           <span />
         </div>
       </div>
+
+      <div className="risk-band">
+        <AlertTriangle
+          size={14}
+        />
+
+        {band
+          ? formatScreeningBand(
+              band,
+            )
+          : "No screening yet"}
+      </div>
+
+      <div className="risk-config-note">
+        Heat Index screening
+        {" · "}
+        {configurationText}
+
+        {analysisMode ===
+        "replay"
+          ? " · Historical replay"
+          : ""}
+      </div>
+    </article>
+  );
+}
+
+
+function AnalysisProgress({
+  environment,
+  assessment,
+  outlook,
+  decision,
+}) {
+  const stages = [
+    {
+      label: "SENSE",
+      complete:
+        Boolean(
+          environment,
+        ),
+    },
+    {
+      label: "ASSESS",
+      complete:
+        Boolean(
+          assessment,
+        ),
+    },
+    {
+      label: "PREDICT",
+      complete:
+        Boolean(
+          outlook,
+        ),
+    },
+    {
+      label: "DECIDE",
+      complete:
+        Boolean(
+          decision,
+        ) &&
+        decision.status !==
+          "agent_unavailable",
+    },
+  ];
+
+  return (
+    <div className="agent-flow">
+      {stages.map(
+        (
+          stage,
+          index,
+        ) => (
+          <div
+            className="agent-flow-step"
+            key={
+              stage.label
+            }
+          >
+            <span
+              className={
+                `flow-dot ${
+                  stage.complete
+                    ? "complete"
+                    : ""
+                }`
+              }
+            />
+
+            <strong>
+              {stage.label}
+            </strong>
+
+            {index <
+            stages.length -
+              1 ? (
+              <i />
+            ) : null}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
+
+function RiskAnalysisPanel({
+  cycle,
+  environment,
+  analysisError,
+  analysisMode,
+}) {
+  const assessment =
+    cycle
+      ?.current_assessment;
+
+  const outlook =
+    cycle
+      ?.heat_outlook;
+
+  const decision =
+    cycle
+      ?.agent_decision;
+
+  const screening =
+    assessment
+      ?.screening;
+
+  const explanations =
+    assessment
+      ?.explanations ??
+    [];
+
+  const factors =
+    assessment
+      ?.factors ??
+    [];
+
+  const isReplay =
+    analysisMode ===
+    "replay";
+
+  let mainCopy =
+    (
+      "Run an analysis to load FortyGuard evidence "
+      + "and start the HeatShield decision pipeline."
+    );
+
+  if (assessment) {
+    mainCopy =
+      explanations[0] ??
+      (
+        `HeatShield received ${assessment.data_quality} environmental `
+        + "evidence and completed deterministic assessment."
+      );
+  } else if (environment) {
+    mainCopy =
+      (
+        "FortyGuard provider evidence is available. "
+        + "The complete agentic cycle was not completed, "
+        + "so no AI decision is being claimed."
+      );
+  }
+
+  if (
+    isReplay &&
+    assessment
+  ) {
+    mainCopy =
+      (
+        "Historical replay: all SENSE, ASSESS, PREDICT and DECIDE "
+        + "stages are anchored to the same verified FortyGuard "
+        + "historical analysis hour. "
+        + mainCopy
+      );
+  }
+
+  return (
+    <section className="panel ai-panel">
+      <div className="panel-title-row">
+        <div>
+          <div className="section-eyebrow">
+            ASSESS + DECIDE
+          </div>
+
+          <h2>
+            Agentic Risk Analysis
+          </h2>
+        </div>
+
+        <div className="ai-icon">
+          <BrainCircuit
+            size={25}
+          />
+        </div>
+      </div>
+
+      <AnalysisProgress
+        environment={
+          environment
+        }
+        assessment={
+          assessment
+        }
+        outlook={
+          outlook
+        }
+        decision={
+          decision
+        }
+      />
+
+      <div className="analysis-summary">
+        <div className="analysis-state-row">
+          <span
+            className={
+              `decision-chip ${
+                decision?.status ===
+                "decided"
+                  ? "decision-live"
+                  : ""
+              }`
+            }
+          >
+            <Sparkles
+              size={13}
+            />
+
+            {decision
+              ? humanize(
+                  decision.status,
+                )
+
+              : environment
+                ? "Provider data only"
+
+                : "Waiting"}
+          </span>
+
+          {isReplay ? (
+            <span className="model-chip">
+              Historical Replay
+            </span>
+          ) : null}
+
+          {decision
+            ?.model ? (
+            <span className="model-chip">
+              {decision.model}
+            </span>
+          ) : null}
+        </div>
+
+        <p>
+          {mainCopy}
+        </p>
+      </div>
+
+      <div className="analysis-grid">
+        <div>
+          <span>
+            Data quality
+          </span>
+
+          <strong>
+            {assessment
+              ? humanize(
+                  assessment
+                    .data_quality,
+                )
+
+              : environment
+                ? "Provider evidence"
+
+                : "--"}
+          </strong>
+        </div>
+
+        <div>
+          <span>
+            Heat screening
+          </span>
+
+          <strong>
+            {screening
+              ?.band
+              ? formatScreeningBand(
+                  screening.band,
+                )
+
+              : formatScreeningBand(
+                  deriveHeatIndexBand(
+                    environment
+                      ?.heat_index_c,
+                  ),
+                )}
+          </strong>
+        </div>
+
+        <div>
+          <span>
+            Forecast trend
+          </span>
+
+          <strong>
+            {outlook
+              ?.summary
+              ?.trend
+              ? humanize(
+                  outlook
+                    .summary
+                    .trend,
+                )
+
+              : "--"}
+          </strong>
+        </div>
+
+        <div>
+          <span>
+            Next step
+          </span>
+
+          <strong>
+            {cycle
+              ?.next_step
+              ? humanize(
+                  cycle
+                    .next_step,
+                )
+
+              : "--"}
+          </strong>
+        </div>
+      </div>
+
+      {factors.length ? (
+        <div className="drivers-card">
+          <h3>
+            Evidence Drivers
+          </h3>
+
+          {factors
+            .slice(
+              0,
+              3,
+            )
+            .map(
+              (
+                factor,
+                index,
+              ) => (
+                <div
+                  className="driver-row"
+                  key={
+                    `${factor.factor}-${index}`
+                  }
+                >
+                  <span className="driver-number">
+                    0
+                    {index + 1}
+                  </span>
+
+                  <div>
+                    <strong>
+                      {humanize(
+                        factor.factor,
+                      )}
+                    </strong>
+
+                    <span>
+                      {factor.effect ??
+                        String(
+                          factor.value ??
+                            "",
+                        )}
+                    </span>
+                  </div>
+                </div>
+              ),
+            )}
+        </div>
+      ) : null}
+
+      {analysisError ? (
+        <div className="inline-warning">
+          <AlertTriangle
+            size={16}
+          />
+
+          <span>
+            {analysisError}
+          </span>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function ForecastChart() {
+
+function ForecastPanel({
+  cycle,
+  environment,
+  analysisMode,
+}) {
+  const outlook =
+    cycle
+      ?.heat_outlook;
+
+  const currentTemp =
+    numberOrNull(
+      environment
+        ?.temperature_c,
+    );
+
+  const forecastData =
+    useMemo(
+      () => {
+        const data = [];
+
+        if (
+          currentTemp !==
+          null
+        ) {
+          data.push({
+            offset: 0,
+            temperature:
+              currentTemp,
+            label: "Now",
+          });
+        }
+
+        for (
+          const point
+          of outlook?.points ??
+            []
+        ) {
+          if (
+            point.status ===
+              "available" &&
+            numberOrNull(
+              point.temperature_c,
+            ) !== null
+          ) {
+            data.push({
+              offset:
+                point.offset_hours,
+
+              temperature:
+                point.temperature_c,
+
+              label:
+                `+${point.offset_hours}h`,
+            });
+          }
+        }
+
+        return data;
+      },
+      [
+        currentTemp,
+        outlook,
+      ],
+    );
+
   return (
     <section className="panel forecast-panel">
-      <div className="panel-title-row forecast-title">
+      <div className="panel-title-row">
         <div>
-          <h2>24-Hour Heat Forecast</h2>
-          <p>Hourly surface temperature projection</p>
+          <div className="section-eyebrow">
+            PREDICT
+          </div>
+
+          <h2>
+            Provider Heat Outlook
+          </h2>
+
+          <p className="panel-subtitle">
+            {analysisMode ===
+            "replay"
+              ? (
+                "Historical FortyGuard sampled temperature points"
+              )
+              : (
+                "FortyGuard sampled temperature points"
+              )}
+          </p>
         </div>
-        <div className="forecast-live-chip">
-          <Activity size={14} />
-          Live model
+
+        <div
+          className={
+            `forecast-status ${
+              outlook
+                ? "forecast-active"
+                : ""
+            }`
+          }
+        >
+          <Activity
+            size={14}
+          />
+
+          {outlook
+            ? humanize(
+                outlook.status,
+              )
+            : "Not loaded"}
         </div>
       </div>
 
-      <div className="chart-wrap">
-        <div className="static-chart-tooltip">
-          <strong>36.2°C</strong>
-          <span>2:00 PM</span>
+      {forecastData.length >=
+      2 ? (
+        <div className="chart-wrap">
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+          >
+            <AreaChart
+              data={
+                forecastData
+              }
+              margin={{
+                top: 18,
+                right: 8,
+                bottom: 0,
+                left: -18,
+              }}
+            >
+              <defs>
+                <linearGradient
+                  id="heatForecastFill"
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
+                  <stop
+                    offset="0%"
+                    stopColor="#ff522e"
+                    stopOpacity={
+                      0.48
+                    }
+                  />
+
+                  <stop
+                    offset="100%"
+                    stopColor="#ff522e"
+                    stopOpacity={
+                      0.02
+                    }
+                  />
+                </linearGradient>
+
+                <linearGradient
+                  id="heatForecastStroke"
+                  x1="0"
+                  y1="0"
+                  x2="1"
+                  y2="0"
+                >
+                  <stop
+                    offset="0%"
+                    stopColor="#ffb020"
+                  />
+
+                  <stop
+                    offset="100%"
+                    stopColor="#ff3e35"
+                  />
+                </linearGradient>
+              </defs>
+
+              <CartesianGrid
+                stroke="#263449"
+                strokeDasharray="4 6"
+                vertical={false}
+                opacity={0.55}
+              />
+
+              <XAxis
+                dataKey="offset"
+                tickFormatter={(
+                  value,
+                ) =>
+                  value === 0
+                    ? "Now"
+                    : `+${value}h`
+                }
+                tickLine={false}
+                axisLine={{
+                  stroke:
+                    "#334157",
+                }}
+                tick={{
+                  fill:
+                    "#8797aa",
+                  fontSize: 11,
+                }}
+              />
+
+              <YAxis
+                tickFormatter={(
+                  value,
+                ) =>
+                  `${value}°`
+                }
+                tickLine={false}
+                axisLine={false}
+                width={50}
+                tick={{
+                  fill:
+                    "#8797aa",
+                  fontSize: 11,
+                }}
+                domain={[
+                  "dataMin - 2",
+                  "dataMax + 2",
+                ]}
+              />
+
+              <ChartTooltip
+                contentStyle={{
+                  background:
+                    "#081523",
+
+                  border:
+                    "1px solid #25384e",
+
+                  borderRadius:
+                    "10px",
+
+                  color:
+                    "#ffffff",
+                }}
+                formatter={(
+                  value,
+                ) => [
+                  `${Number(
+                    value,
+                  ).toFixed(
+                    1,
+                  )}°C`,
+
+                  "Temperature",
+                ]}
+                labelFormatter={(
+                  value,
+                ) =>
+                  value === 0
+                    ? "Analysis hour"
+                    : `+${value} hours`
+                }
+              />
+
+              <Area
+                type="monotone"
+                dataKey="temperature"
+                stroke="url(#heatForecastStroke)"
+                strokeWidth={3}
+                fill="url(#heatForecastFill)"
+                isAnimationActive
+              />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={forecast} margin={{ top: 18, right: 8, left: -15, bottom: 0 }}>
-            <defs>
-              <linearGradient id="forecastFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#f03d24" stopOpacity={0.5} />
-                <stop offset="100%" stopColor="#f03d24" stopOpacity={0.02} />
-              </linearGradient>
-              <linearGradient id="forecastStroke" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor="#ff8a00" />
-                <stop offset="100%" stopColor="#ff3b30" />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="#263449" strokeDasharray="4 6" vertical={false} opacity={0.55} />
-            <XAxis
-              dataKey="hour"
-              type="number"
-              domain={[0, 24]}
-              ticks={[0, 4, 8, 12, 16, 20, 24]}
-              tickFormatter={(value) => timeLabels[value]}
-              axisLine={{ stroke: "#334157" }}
-              tickLine={false}
-              tick={{ fill: "#a7b2c4", fontSize: 11 }}
-            />
-            <YAxis
-              domain={[10, 40]}
-              ticks={[10, 20, 30, 40]}
-              tickFormatter={(value) => `${value}°C`}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "#a7b2c4", fontSize: 11 }}
-            />
-            <ReferenceLine x={14} stroke="#ff9b67" strokeDasharray="4 4" opacity={0.8} />
-            <ReferenceDot x={14} y={36.2} r={5} fill="#ffb000" stroke="#fff" strokeWidth={2} />
-            <Area
-              type="monotone"
-              dataKey="temperature"
-              stroke="url(#forecastStroke)"
-              strokeWidth={3}
-              fill="url(#forecastFill)"
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+      ) : (
+        <div className="empty-panel-state">
+          <Radar
+            size={31}
+          />
+
+          <strong>
+            Forecast not available
+          </strong>
+
+          <span>
+            Run Analyze to
+            request the backend
+            PREDICT stage.
+          </span>
+        </div>
+      )}
+
+      {outlook
+        ?.summary ? (
+        <div className="forecast-summary">
+          <div>
+            <span>
+              Highest sampled
+            </span>
+
+            <strong>
+              {formatMetric(
+                outlook
+                  .summary
+                  .highest_sampled_temperature_c,
+              )}
+              °C
+            </strong>
+          </div>
+
+          <div>
+            <span>
+              Lowest sampled
+            </span>
+
+            <strong>
+              {formatMetric(
+                outlook
+                  .summary
+                  .lowest_sampled_temperature_c,
+              )}
+              °C
+            </strong>
+          </div>
+
+          <div>
+            <span>
+              Available
+            </span>
+
+            <strong>
+              {
+                outlook
+                  .summary
+                  .available_points
+              }
+              /
+              {
+                outlook
+                  .summary
+                  .total_points
+              }
+            </strong>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function RecommendedActions() {
+
+function RecommendationsPanel({
+  cycle,
+}) {
+  const assessment =
+    cycle
+      ?.current_assessment;
+
+  const decision =
+    cycle
+      ?.agent_decision;
+
+  const aiActions =
+    decision
+      ?.actions ??
+    [];
+
+  const deterministicControls =
+    assessment
+      ?.screening
+      ?.recommended_controls ??
+    [];
+
+  const rows =
+    aiActions.length >
+    0
+      ? aiActions
+          .slice(
+            0,
+            3,
+          )
+          .map(
+            (
+              action,
+            ) => ({
+              title:
+                actionNames[
+                  action
+                    .action_type
+                ] ??
+                humanize(
+                  action
+                    .action_type,
+                ),
+
+              description:
+                action
+                  .reason_codes
+                  ?.map(
+                    humanize,
+                  )
+                  .join(
+                    " · ",
+                  ) ??
+                "Agent-selected action",
+
+              source:
+                (
+                  "DeepSeek + "
+                  + "server validation"
+                ),
+
+              approval:
+                action
+                  .requires_human_approval,
+            }),
+          )
+
+      : deterministicControls
+          .slice(
+            0,
+            3,
+          )
+          .map(
+            (
+              control,
+            ) => ({
+              title:
+                control,
+
+              description:
+                (
+                  "Deterministic "
+                  + "screening control"
+                ),
+
+              source:
+                "HeatShield policy",
+
+              approval:
+                false,
+            }),
+          );
+
   return (
     <section className="panel actions-panel">
-      <div className="panel-title-row actions-title">
-        <div className="title-with-icon">
-          <Leaf className="actions-leaf" size={20} />
-          <h2>Recommended Actions</h2>
+      <div className="panel-title-row">
+        <div>
+          <div className="section-eyebrow">
+            ACT
+          </div>
+
+          <h2>
+            Recommended Actions
+          </h2>
         </div>
-        <span>3 prioritized</span>
+
+        <div className="action-source-chip">
+          <Leaf
+            size={14}
+          />
+
+          {aiActions.length
+            ? "Agent selected"
+            : "Policy backed"}
+        </div>
       </div>
 
-      <div className="action-list">
-        {recommendedActions.map(({ title, description, icon: Icon, tone }, index) => (
-          <button className="action-row" type="button" key={title}>
-            <div className={`action-icon action-${tone}`}>
-              <Icon size={20} />
-            </div>
-            <div className="action-copy">
-              <strong>{title}</strong>
-              <span>{description}</span>
-            </div>
-            <div className="action-index">0{index + 1}</div>
-            <ArrowRight size={19} className="action-arrow" />
-          </button>
-        ))}
-      </div>
+      {rows.length ? (
+        <div className="action-list">
+          {rows.map(
+            (
+              item,
+              index,
+            ) => (
+              <div
+                className="action-row"
+                key={
+                  `${item.title}-${index}`
+                }
+              >
+                <div className="action-index">
+                  0
+                  {index + 1}
+                </div>
+
+                <div className="action-copy">
+                  <strong>
+                    {item.title}
+                  </strong>
+
+                  <span>
+                    {item.description}
+                  </span>
+
+                  <small>
+                    {item.source}
+
+                    {item.approval
+                      ? (
+                        " · Human approval required"
+                      )
+                      : ""}
+                  </small>
+                </div>
+
+                <ArrowRight
+                  size={17}
+                />
+              </div>
+            ),
+          )}
+        </div>
+      ) : (
+        <div className="empty-panel-state action-empty">
+          <Trees
+            size={29}
+          />
+
+          <strong>
+            No actions yet
+          </strong>
+
+          <span>
+            HeatShield will show
+            server-validated
+            recommendations after
+            analysis.
+          </span>
+        </div>
+      )}
+
+      {cycle
+        ?.next_step ===
+      "human_approval_required" ? (
+        <div className="approval-banner">
+          <ShieldCheck
+            size={17}
+          />
+
+          <span>
+            Agent actions are
+            proposals only.
+            Supervisor approval is
+            required before ACT.
+          </span>
+        </div>
+      ) : null}
     </section>
   );
 }
 
+
 function App() {
-  const requestInFlight = useRef(false);
-  const [heatmapState, setHeatmapState] = useState({
-    phase: "demo",
+  const requestInFlight =
+    useRef(false);
+
+  const [
+    searchValue,
+    setSearchValue,
+  ] = useState(
+    "Phoenix, Arizona",
+  );
+
+  const [
+    location,
+    setLocation,
+  ] = useState({
+    ...PHOENIX_LOCATION,
+  });
+
+  const [
+    analysisMode,
+    setAnalysisMode,
+  ] = useState(
+    "idle",
+  );
+
+  const [
+    heatmapState,
+    setHeatmapState,
+  ] = useState({
+    phase: "idle",
     activityId: null,
     providerStatus: null,
     mapData: null,
     featureCount: 0,
     request: null,
     error: null,
+    fallbackReason: null,
   });
 
-  const analyzePhoenix = useCallback(async () => {
-    if (requestInFlight.current) return;
-    requestInFlight.current = true;
-    setHeatmapState({
-      phase: "loading",
-      activityId: null,
-      providerStatus: null,
-      mapData: null,
-      featureCount: 0,
-      request: null,
-      error: null,
-    });
+  const [
+    environmentState,
+    setEnvironmentState,
+  ] = useState({
+    phase: "idle",
+    data: null,
+    error: null,
+  });
 
-    try {
-      const result = await fetchHeatmap();
-      setHeatmapState({
-        phase: "live",
-        activityId: result.activityId,
-        providerStatus: result.status,
-        mapData: result.mapData,
-        featureCount: result.featureCount,
-        request: result.request,
-        error: null,
-      });
-    } catch (error) {
-      setHeatmapState({
-        phase: "error",
-        activityId: null,
-        providerStatus: null,
-        mapData: null,
-        featureCount: 0,
-        request: null,
-        error:
-          error instanceof Error && error.message
-            ? error.message
-            : "Unable to load live heat intelligence.",
-      });
-    } finally {
-      requestInFlight.current = false;
-    }
-  }, []);
+  const [
+    cycleState,
+    setCycleState,
+  ] = useState({
+    phase: "idle",
+    data: null,
+    error: null,
+  });
+
+  const [
+    globalError,
+    setGlobalError,
+  ] = useState(null);
+
+
+  const environment =
+    cycleState.data
+      ?.current_assessment
+      ?.environmental_evidence ??
+    environmentState.data
+      ?.condition ??
+    null;
+
+
+  const assessment =
+    cycleState.data
+      ?.current_assessment ??
+    null;
+
+
+  const isAnalyzing =
+    heatmapState.phase ===
+      "loading" ||
+    cycleState.phase ===
+      "loading";
+
+
+  const systemState =
+    isAnalyzing
+      ? "loading"
+
+      : analysisMode ===
+          "replay" &&
+        heatmapState.mapData
+        ? "replay"
+
+      : cycleState.data &&
+        heatmapState.phase ===
+          "live"
+        ? "connected"
+
+      : environment
+        ? "partial"
+
+      : globalError
+        ? "error"
+
+      : "idle";
+
+
+  const applyAttempt =
+    useCallback(
+      (
+        attempt,
+        mode,
+        fallbackReason = null,
+      ) => {
+        const {
+          heatmap,
+          environmentResult,
+          cycleResult,
+        } = attempt;
+
+        setAnalysisMode(
+          mode,
+        );
+
+        setHeatmapState({
+          phase:
+            mode ===
+            "live"
+              ? "live"
+              : "replay",
+
+          activityId:
+            heatmap.activityId,
+
+          providerStatus:
+            heatmap.status,
+
+          mapData:
+            heatmap.mapData,
+
+          featureCount:
+            heatmap.featureCount,
+
+          request:
+            heatmap.request,
+
+          error: null,
+
+          fallbackReason,
+        });
+
+        if (
+          environmentResult.status ===
+          "fulfilled"
+        ) {
+          setEnvironmentState({
+            phase:
+              "available",
+
+            data:
+              environmentResult.value,
+
+            error: null,
+          });
+        } else {
+          setEnvironmentState({
+            phase:
+              "error",
+
+            data: null,
+
+            error:
+              environmentResult
+                .reason
+                ?.message ??
+              (
+                "Environmental evidence "
+                + "was unavailable."
+              ),
+          });
+        }
+
+        if (
+          cycleResult.status ===
+          "fulfilled"
+        ) {
+          setCycleState({
+            phase:
+              "available",
+
+            data:
+              cycleResult.value,
+
+            error: null,
+          });
+        } else {
+          setCycleState({
+            phase:
+              "error",
+
+            data: null,
+
+            error:
+              cycleResult
+                .reason
+                ?.message ??
+              (
+                "The HeatShield agentic "
+                + "cycle was unavailable."
+              ),
+          });
+        }
+      },
+      [],
+    );
+
+
+  const runAnalysis =
+    useCallback(
+      async () => {
+        if (
+          requestInFlight
+            .current
+        ) {
+          return;
+        }
+
+        let selectedLocation;
+
+        try {
+          selectedLocation =
+            parseLocationInput(
+              searchValue,
+            );
+
+        } catch (error) {
+          setGlobalError(
+            error.message,
+          );
+
+          return;
+        }
+
+        requestInFlight.current =
+          true;
+
+        setGlobalError(
+          null,
+        );
+
+        setLocation(
+          selectedLocation,
+        );
+
+        setAnalysisMode(
+          "loading",
+        );
+
+        setHeatmapState({
+          phase:
+            "loading",
+
+          activityId:
+            null,
+
+          providerStatus:
+            null,
+
+          mapData:
+            null,
+
+          featureCount:
+            0,
+
+          request:
+            null,
+
+          error:
+            null,
+
+          fallbackReason:
+            null,
+        });
+
+        setEnvironmentState({
+          phase:
+            "loading",
+
+          data:
+            null,
+
+          error:
+            null,
+        });
+
+        setCycleState({
+          phase:
+            "loading",
+
+          data:
+            null,
+
+          error:
+            null,
+        });
+
+
+        async function analyzeAt({
+          dateTime,
+          analysisDatetime,
+        }) {
+          const heatmap =
+            await fetchHeatmap({
+              latitude:
+                selectedLocation
+                  .latitude,
+
+              longitude:
+                selectedLocation
+                  .longitude,
+
+              dateTime,
+
+              radiusMeters:
+                300,
+
+              granularity:
+                100,
+            });
+
+          const [
+            environmentResult,
+            cycleResult,
+          ] =
+            await Promise.allSettled(
+              [
+                fetchEnvironmentForHeatmap(
+                  heatmap,
+                  selectedLocation,
+                ),
+
+                fetchCyclePlan(
+                  selectedLocation,
+                  {
+                    analysisDatetime,
+                  },
+                ),
+              ],
+            );
+
+          return {
+            heatmap,
+            environmentResult,
+            cycleResult,
+          };
+        }
+
+
+        let currentAttempt =
+          null;
+
+        let currentFailure =
+          null;
+
+        try {
+          const currentFilter =
+            getCurrentPhoenixDateTimeFilter();
+
+          currentAttempt =
+            await analyzeAt({
+              dateTime:
+                currentFilter,
+
+              analysisDatetime:
+                null,
+            });
+
+          const currentComplete =
+            currentAttempt
+              .environmentResult
+              .status ===
+              "fulfilled" &&
+            currentAttempt
+              .cycleResult
+              .status ===
+              "fulfilled";
+
+          if (
+            currentComplete
+          ) {
+            applyAttempt(
+              currentAttempt,
+              "live",
+            );
+
+            return;
+          }
+
+          currentFailure =
+            currentAttempt
+              .cycleResult
+              .status ===
+              "rejected"
+              ? currentAttempt
+                  .cycleResult
+                  .reason
+                  ?.message
+
+              : currentAttempt
+                  .environmentResult
+                  .status ===
+                  "rejected"
+                ? currentAttempt
+                    .environmentResult
+                    .reason
+                    ?.message
+
+                : (
+                  "Current provider pipeline "
+                  + "did not complete."
+                );
+
+        } catch (error) {
+          currentFailure =
+            error?.message ??
+            (
+              "Current provider evidence "
+              + "was unavailable."
+            );
+        }
+
+
+        try {
+          const replayAttempt =
+            await analyzeAt({
+              dateTime:
+                VERIFIED_SNAPSHOT_FILTER,
+
+              analysisDatetime:
+                VERIFIED_REPLAY_DATETIME,
+            });
+
+          applyAttempt(
+            replayAttempt,
+            "replay",
+            currentFailure,
+          );
+
+          if (
+            replayAttempt
+              .cycleResult
+              .status ===
+              "rejected"
+          ) {
+            setGlobalError(
+              (
+                "Historical provider evidence loaded, "
+                + "but the complete agentic cycle did not finish."
+              ),
+            );
+          }
+
+          return;
+
+        } catch (replayError) {
+          if (
+            currentAttempt
+          ) {
+            applyAttempt(
+              currentAttempt,
+              "live",
+            );
+
+            setGlobalError(
+              (
+                "Current provider map was available, "
+                + "but the complete current pipeline failed "
+                + "and the historical replay also failed."
+              ),
+            );
+
+            return;
+          }
+
+          setAnalysisMode(
+            "error",
+          );
+
+          setHeatmapState({
+            phase:
+              "error",
+
+            activityId:
+              null,
+
+            providerStatus:
+              null,
+
+            mapData:
+              null,
+
+            featureCount:
+              0,
+
+            request:
+              null,
+
+            error:
+              replayError
+                ?.message ??
+              (
+                "Unable to load "
+                + "FortyGuard heat intelligence."
+              ),
+
+            fallbackReason:
+              currentFailure,
+          });
+
+          setEnvironmentState({
+            phase:
+              "error",
+
+            data:
+              null,
+
+            error:
+              replayError
+                ?.message ??
+              (
+                "Environmental evidence "
+                + "was unavailable."
+              ),
+          });
+
+          setCycleState({
+            phase:
+              "error",
+
+            data:
+              null,
+
+            error:
+              replayError
+                ?.message ??
+              (
+                "HeatShield cycle "
+                + "was unavailable."
+              ),
+          });
+
+          setGlobalError(
+            (
+              "HeatShield could not obtain either "
+              + "a complete current analysis or the "
+              + "verified historical replay."
+            ),
+          );
+
+        } finally {
+          requestInFlight.current =
+            false;
+        }
+      },
+      [
+        searchValue,
+        applyAttempt,
+      ],
+    );
+
+
+  const metricCards = [
+    {
+      title:
+        "Temperature",
+
+      value:
+        formatMetric(
+          environment
+            ?.temperature_c,
+        ),
+
+      unit:
+        "°C",
+
+      detail:
+        (
+          analysisMode ===
+          "replay"
+            ? "Historical provider temperature"
+            : "Provider temperature"
+        ),
+
+      icon:
+        ThermometerSun,
+
+      tone:
+        "orange",
+    },
+
+    {
+      title:
+        "Heat Index",
+
+      value:
+        formatMetric(
+          environment
+            ?.heat_index_c,
+        ),
+
+      unit:
+        "°C",
+
+      detail:
+        "Provider heat index",
+
+      icon:
+        SunMedium,
+
+      tone:
+        "amber",
+    },
+
+    {
+      title:
+        "Humidity",
+
+      value:
+        formatMetric(
+          environment
+            ?.relative_humidity,
+        ),
+
+      unit:
+        "%",
+
+      detail:
+        "Relative humidity",
+
+      icon:
+        Droplets,
+
+      tone:
+        "cyan",
+    },
+
+    {
+      title:
+        "Wet Bulb Temp",
+
+      value:
+        formatMetric(
+          environment
+            ?.wet_bulb_temperature_c,
+        ),
+
+      unit:
+        "°C",
+
+      detail:
+        "Wet bulb — not WBGT",
+
+      icon:
+        Wind,
+
+      tone:
+        "blue",
+    },
+  ];
+
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar
+        systemState={
+          systemState
+        }
+      />
+
       <main className="dashboard-main">
         <TopBar
-          isAnalyzing={heatmapState.phase === "loading"}
-          onAnalyze={analyzePhoenix}
+          value={
+            searchValue
+          }
+          onChange={
+            setSearchValue
+          }
+          onAnalyze={
+            runAnalysis
+          }
+          isAnalyzing={
+            isAnalyzing
+          }
+          environment={
+            environment
+          }
         />
 
-        <section className="metrics-grid" aria-label="Current heat metrics">
-          <RiskMetric />
-          {metrics.map((metric) => (
-            <MetricCard {...metric} key={metric.title} />
-          ))}
+        <div className="dashboard-heading">
+          <div>
+            <div className="section-eyebrow">
+              HEATSHIELD COMMAND CENTER
+            </div>
+
+            <h1>
+              Urban Heat Intelligence
+            </h1>
+
+            <p>
+              FortyGuard provider
+              evidence → deterministic
+              risk assessment →
+              sampled heat outlook →
+              constrained DeepSeek
+              decision.
+            </p>
+          </div>
+
+          <div className="location-summary">
+            <MapPinned
+              size={18}
+            />
+
+            <div>
+              <strong>
+                {location.name}
+              </strong>
+
+              <span>
+                {location.latitude.toFixed(
+                  4,
+                )}
+                ,{" "}
+                {location.longitude.toFixed(
+                  4,
+                )}
+
+                {analysisMode ===
+                "replay"
+                  ? " · Historical Replay"
+                  : ""}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {globalError ? (
+          <div className="global-error">
+            <AlertTriangle
+              size={17}
+            />
+
+            <span>
+              {globalError}
+            </span>
+          </div>
+        ) : null}
+
+        <section className="metrics-grid">
+          <RiskCard
+            assessment={
+              assessment
+            }
+            environment={
+              environment
+            }
+            analysisMode={
+              analysisMode
+            }
+          />
+
+          {metricCards.map(
+            (
+              metric,
+            ) => (
+              <MetricCard
+                key={
+                  metric.title
+                }
+                {...metric}
+                provider={
+                  Boolean(
+                    environment,
+                  )
+                }
+              />
+            ),
+          )}
         </section>
 
-        <div className="content-grid">
-          <LiveHeatMap heatmapState={heatmapState} />
-          <AiRiskAnalysis />
-          <ForecastChart />
-          <RecommendedActions />
-        </div>
+        <section className="content-grid">
+          <LiveHeatMap
+            heatmapState={
+              heatmapState
+            }
+            location={
+              location
+            }
+          />
+
+          <RiskAnalysisPanel
+            cycle={
+              cycleState.data
+            }
+            environment={
+              environment
+            }
+            analysisError={
+              cycleState.error
+            }
+            analysisMode={
+              analysisMode
+            }
+          />
+
+          <ForecastPanel
+            cycle={
+              cycleState.data
+            }
+            environment={
+              environment
+            }
+            analysisMode={
+              analysisMode
+            }
+          />
+
+          <RecommendationsPanel
+            cycle={
+              cycleState.data
+            }
+          />
+        </section>
+
+        <footer className="dashboard-footer">
+          <div>
+            <Shield
+              size={15}
+            />
+
+            HeatShield decision
+            support — human approval
+            required for operational
+            actions.
+          </div>
+
+          <div>
+            FortyGuard evidence ·
+            HeatShield deterministic
+            validation · DeepSeek
+            constrained tool selection
+          </div>
+        </footer>
       </main>
     </div>
   );
 }
+
 
 export default App;

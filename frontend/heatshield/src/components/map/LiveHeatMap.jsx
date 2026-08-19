@@ -1,68 +1,173 @@
-import L from "leaflet";
-import { AlertTriangle, ChevronDown, Info, Layers3, LoaderCircle } from "lucide-react";
 import {
-  CircleMarker,
+  useMemo,
+} from "react";
+
+import L from "leaflet";
+
+import {
+  AlertTriangle,
+  Info,
+  Layers3,
+  LoaderCircle,
+  MapPin,
+} from "lucide-react";
+
+import {
   MapContainer,
   Marker,
-  Pane,
   Popup,
   TileLayer,
   Tooltip,
   ZoomControl,
 } from "react-leaflet";
+
 import FortyGuardHeatLayer from "./FortyGuardHeatLayer.jsx";
 import MockHeatLayer from "./MockHeatLayer.jsx";
 
-const PHOENIX = [33.4484, -112.074];
 
-const locationIcon = L.divIcon({
-  className: "heatshield-marker-shell",
-  html: '<div class="heatshield-map-pin"><span></span></div>',
-  iconSize: [38, 46],
-  iconAnchor: [19, 43],
-  popupAnchor: [0, -38],
-});
+const locationIcon =
+  L.divIcon({
+    className:
+      "heatshield-marker-shell",
 
-const defaultHeatmapState = {
-  phase: "demo",
+    html:
+      '<div class="heatshield-map-pin"><span></span></div>',
+
+    iconSize:
+      [38, 46],
+
+    iconAnchor:
+      [19, 43],
+
+    popupAnchor:
+      [0, -38],
+  });
+
+
+const DEFAULT_STATE = {
+  phase: "idle",
   activityId: null,
   providerStatus: null,
   mapData: null,
   featureCount: 0,
   request: null,
   error: null,
+  fallbackReason: null,
 };
 
-export default function LiveHeatMap({ heatmapState = defaultHeatmapState }) {
-  const isLive = heatmapState.phase === "live" && heatmapState.mapData;
-  const isLoading = heatmapState.phase === "loading";
-  const showMock = heatmapState.phase === "demo" || heatmapState.phase === "error";
-  const dateTime = heatmapState.request?.date_time;
+
+export default function LiveHeatMap({
+  heatmapState =
+    DEFAULT_STATE,
+
+  location,
+}) {
+  const markerPosition =
+    useMemo(
+      () => [
+        location.latitude,
+        location.longitude,
+      ],
+      [
+        location.latitude,
+        location.longitude,
+      ],
+    );
+
+  const hasProviderMap =
+    [
+      "live",
+      "replay",
+    ].includes(
+      heatmapState.phase,
+    ) &&
+    heatmapState.mapData;
+
+  const isLive =
+    heatmapState.phase ===
+    "live";
+
+  const isReplay =
+    heatmapState.phase ===
+    "replay";
+
+  const isLoading =
+    heatmapState.phase ===
+    "loading";
+
+  const showMock =
+    heatmapState.phase ===
+      "idle" ||
+    heatmapState.phase ===
+      "error";
+
+  const dateTime =
+    heatmapState.request
+      ?.date_time;
+
+  const badgeLabel =
+    isLive
+      ? "FortyGuard Live"
+      : isReplay
+        ? "Historical Replay"
+        : isLoading
+          ? "Analyzing"
+          : "Demo Preview";
+
+  const badgeClass =
+    isLive
+      ? "provider-live"
+      : isReplay
+        ? "provider-snapshot"
+        : isLoading
+          ? "provider-loading"
+          : "provider-demo";
 
   return (
     <section className="panel map-panel">
       <div className="map-card-header">
-        <div className="map-title">
-          <h2>Live Heat Map</h2>
-          <Info size={16} aria-label="Interactive surface-temperature heat map" />
-          <span
-            className={`map-data-badge ${isLive ? "provider-live" : isLoading ? "provider-loading" : "provider-demo"}`}
-          >
-            <i />
-            {isLive ? "FortyGuard Live" : isLoading ? "Analyzing" : "Demo Data"}
-          </span>
+        <div>
+          <div className="section-eyebrow">
+            SENSE
+          </div>
+
+          <div className="map-title">
+            <h2>
+              Heat Exposure Map
+            </h2>
+
+            <Info
+              size={15}
+              aria-label="Interactive FortyGuard heat intelligence map"
+            />
+
+            <span
+              className={
+                `map-data-badge ${badgeClass}`
+              }
+            >
+              <i />
+
+              {badgeLabel}
+            </span>
+          </div>
         </div>
-        <button className="map-layer-select" type="button" aria-label="Select heat map layer">
-          <Layers3 size={16} />
+
+        <div className="map-layer-select">
+          <Layers3
+            size={16}
+          />
+
           Surface Temperature
-          <ChevronDown size={15} />
-        </button>
+        </div>
       </div>
 
       <div className="map-stage">
         <MapContainer
-          center={PHOENIX}
-          zoom={11}
+          center={
+            markerPosition
+          }
+          zoom={12}
           minZoom={9}
           maxZoom={18}
           zoomControl={false}
@@ -75,16 +180,33 @@ export default function LiveHeatMap({ heatmapState = defaultHeatmapState }) {
             url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          {isLive ? (
+          {hasProviderMap ? (
             <FortyGuardHeatLayer
-              activityId={heatmapState.activityId}
-              data={heatmapState.mapData}
-              markerPosition={PHOENIX}
+              activityId={
+                heatmapState.activityId
+              }
+              data={
+                heatmapState.mapData
+              }
+              markerPosition={
+                markerPosition
+              }
             />
           ) : null}
-          {showMock ? <MockHeatLayer /> : null}
 
-          <Marker position={PHOENIX} icon={locationIcon} keyboard>
+          {showMock ? (
+            <MockHeatLayer />
+          ) : null}
+
+          <Marker
+            position={
+              markerPosition
+            }
+            icon={
+              locationIcon
+            }
+            keyboard
+          >
             <Tooltip
               className="map-city-tooltip"
               direction="bottom"
@@ -92,75 +214,160 @@ export default function LiveHeatMap({ heatmapState = defaultHeatmapState }) {
               opacity={1}
               permanent
             >
-              <strong>Phoenix</strong>
-              <span>Central City</span>
-            </Tooltip>
-            <Popup className="heatshield-popup">
-              <strong>Phoenix Central City</strong>
-              <span>33.4484, -112.0740</span>
+              <strong>
+                {location.name}
+              </strong>
+
               <span>
-                {isLive
-                  ? "FortyGuard heat geometry loaded — select a tile for provider values."
-                  : "Selected demonstration location"}
+                {location.city},{" "}
+                {location.state}
+              </span>
+            </Tooltip>
+
+            <Popup className="heatshield-popup">
+              <strong>
+                {location.name}
+              </strong>
+
+              <span>
+                {location.latitude.toFixed(
+                  4,
+                )}
+                ,{" "}
+                {location.longitude.toFixed(
+                  4,
+                )}
+              </span>
+
+              <span>
+                {hasProviderMap
+                  ? (
+                    "Select a heat polygon "
+                    + "to inspect provider values."
+                  )
+                  : (
+                    "Selected HeatShield "
+                    + "analysis location"
+                  )}
               </span>
             </Popup>
           </Marker>
 
-          <Pane name="map-points-of-interest" style={{ zIndex: 560 }}>
-            <CircleMarker
-              center={[33.4725, -112.0877]}
-              radius={7}
-              pathOptions={{ color: "#65e684", fillColor: "#173f34", fillOpacity: 1, weight: 2 }}
-            >
-              <Popup className="heatshield-popup">
-                <strong>Encanto Park</strong>
-                <span>Lower-heat green space</span>
-              </Popup>
-            </CircleMarker>
-          </Pane>
-
           <ZoomControl position="bottomright" />
         </MapContainer>
 
-        <div className="map-request-status" aria-live="polite">
+        <div
+          className="map-request-status"
+          aria-live="polite"
+        >
           {isLoading ? (
             <div className="map-status-card status-loading">
-              <LoaderCircle className="map-status-spinner" size={16} aria-hidden="true" />
+              <LoaderCircle
+                className="map-status-spinner"
+                size={17}
+              />
+
               <span>
-                <strong>Analyzing heat conditions...</strong>
-                Waiting for the FortyGuard job to complete
+                <strong>
+                  Requesting FortyGuard heat intelligence
+                </strong>
+
+                Waiting for the
+                provider job to
+                complete.
               </span>
             </div>
           ) : null}
 
-          {heatmapState.phase === "error" ? (
-            <div className="map-status-card status-error" role="alert">
-              <AlertTriangle size={16} aria-hidden="true" />
+          {heatmapState.phase ===
+          "error" ? (
+            <div
+              className="map-status-card status-error"
+              role="alert"
+            >
+              <AlertTriangle
+                size={17}
+              />
+
               <span>
-                <strong>Unable to load live heat intelligence.</strong>
+                <strong>
+                  Heat intelligence unavailable
+                </strong>
+
                 {heatmapState.error}
               </span>
             </div>
           ) : null}
 
-          {isLive ? (
-            <div className="map-status-card status-live">
-              <span className="status-dot" aria-hidden="true" />
+          {hasProviderMap ? (
+            <div className="map-status-card status-provider">
+              <MapPin
+                size={15}
+              />
+
               <span>
                 <strong>
-                  Provider snapshot · {heatmapState.featureCount} heat polygon
-                  {heatmapState.featureCount === 1 ? "" : "s"}
+                  {
+                    heatmapState.featureCount
+                  }{" "}
+                  FortyGuard heat
+                  polygon
+                  {heatmapState.featureCount ===
+                  1
+                    ? ""
+                    : "s"}
                 </strong>
-                {dateTime?.start_date} at {dateTime?.start_time} · activity {heatmapState.activityId}
+
+                {dateTime?.start_date ??
+                  "Unknown date"}{" "}
+                ·{" "}
+                {dateTime?.start_time ??
+                  "--:--"}
+              </span>
+            </div>
+          ) : null}
+
+          {isReplay ? (
+            <div className="map-status-card status-snapshot-note">
+              <AlertTriangle
+                size={15}
+              />
+
+              <span>
+                <strong>
+                  Historical replay mode
+                </strong>
+
+                Current provider
+                evidence was not
+                sufficient for the
+                complete pipeline.
+
+                {" "}
+
+                HeatShield is replaying
+                a verified FortyGuard
+                historical observation
+                with all pipeline stages
+                aligned to the same time.
               </span>
             </div>
           ) : null}
         </div>
 
-        <div className="map-legend" aria-label="Heat intensity legend">
-          <span>Lower Heat</span>
+        <div
+          className="map-legend"
+          aria-label="Heat intensity legend"
+        >
+          <span>
+            Lower Heat
+          </span>
+
           <div className="heat-gradient" />
-          <span>Extreme Heat</span>
+
+          <span>
+            Extreme Heat
+          </span>
         </div>
       </div>
     </section>
