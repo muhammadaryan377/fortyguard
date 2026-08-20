@@ -4,11 +4,9 @@ import {
   Bell,
   ChevronDown,
   ClipboardList,
-  Flame,
   Home,
   MapPinned,
   Settings,
-  Shield,
   Signal,
   Users,
   Wifi,
@@ -23,11 +21,55 @@ const TABS = [
   ["alerts", "Alerts", Bell],
 ];
 
+function BrandMark() {
+  return (
+    <svg viewBox="0 0 64 72" role="img" aria-label="HeatShield">
+      <defs>
+        <linearGradient id="hsBrandShieldGradient" x1="10" y1="9" x2="55" y2="62" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#ffb33f" />
+          <stop offset="0.42" stopColor="#ff7b28" />
+          <stop offset="1" stopColor="#ef4737" />
+        </linearGradient>
+      </defs>
+
+      <path
+        d="M32 3.5 55.5 10v19.2c0 17.1-9.2 31.2-23.5 39.1C17.7 60.4 8.5 46.3 8.5 29.2V10L32 3.5Z"
+        fill="url(#hsBrandShieldGradient)"
+        stroke="white"
+        strokeWidth="2.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M32 8.2 51.2 13.5v15.2c0 14.7-7.4 27-19.2 34.2-11.8-7.2-19.2-19.5-19.2-34.2V13.5L32 8.2Z"
+        fill="none"
+        stroke="rgba(255,255,255,.32)"
+        strokeWidth="1"
+      />
+
+      <g fill="none" stroke="white" strokeWidth="2.35" strokeLinecap="round">
+        <circle cx="32" cy="31" r="7.5" />
+        <path d="M32 17.3v5" />
+        <path d="M32 39.7v5" />
+        <path d="M18.3 31h5" />
+        <path d="M40.7 31h5" />
+        <path d="m22.3 21.3 3.5 3.5" />
+        <path d="m38.2 37.2 3.5 3.5" />
+        <path d="m41.7 21.3-3.5 3.5" />
+        <path d="m25.8 37.2-3.5 3.5" />
+      </g>
+      <circle cx="32" cy="31" r="3.7" fill="white" opacity=".96" />
+    </svg>
+  );
+}
+
 function Brand() {
   return (
     <div className="hs-brand">
-      <span className="hs-brand-mark"><Shield size={29} /><Flame size={13} /></span>
-      <strong><span>Heat</span>Shield</strong>
+      <span className="hs-brand-mark"><BrandMark /></span>
+      <strong>
+        <span className="hs-brand-heat">Heat</span>
+        <span className="hs-brand-shield">Shield</span>
+      </strong>
     </div>
   );
 }
