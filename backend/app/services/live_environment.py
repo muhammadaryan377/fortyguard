@@ -93,7 +93,7 @@ def _point_in_ring(longitude: float, latitude: float, ring: list[list[Any]]) -> 
     j = len(ring) - 1
     for i, position in enumerate(ring):
         previous = ring[j]
-        
+
         if len(position) < 2 or len(previous) < 2:
             return False
         xi, yi = position[0], position[1]
@@ -253,8 +253,17 @@ async def get_live_environment(
     location: USSiteLocation,
     date_time: LiveDateTimeFilter,
     *,
+    timezone_name: str | None = None,
     client: FortyGuardClient = fortyguard_client,
 ) -> EnvironmentalConditions:
+    """Fetch one validated provider observation for the requested site/hour.
+
+    ``timezone_name`` is accepted for orchestration compatibility. FortyGuard
+    environmental timestamps are intentionally matched as provider-local wall
+    time, so the value is not used to shift the requested hour here.
+    """
+
+    _ = timezone_name
     verified = await get_verified_temperature(location, date_time, client=client)
     environment_request = EnvironmentalParametersRequest(
         latitude=location.latitude,
