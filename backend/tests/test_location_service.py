@@ -1,13 +1,7 @@
-import pytest
-
-from app.services.location_service import (
-    UnsupportedLocationError,
-    _timezone,
-    normalize_nominatim_place,
-)
+from app.services.location_service import _timezone, normalize_nominatim_place
 
 
-def test_normalize_nominatim_us_place_builds_heatshield_location(monkeypatch):
+def test_normalize_nominatim_us_place_enables_fortyguard(monkeypatch):
     monkeypatch.setattr("app.services.location_service._timezone", lambda *_: "America/Chicago")
     result = normalize_nominatim_place({
         "lat": "32.7767",
@@ -17,6 +11,7 @@ def test_normalize_nominatim_us_place_builds_heatshield_location(monkeypatch):
         "address": {
             "city": "Dallas",
             "state": "Texas",
+            "country": "United States",
             "country_code": "us",
         },
     })
@@ -24,17 +19,29 @@ def test_normalize_nominatim_us_place_builds_heatshield_location(monkeypatch):
     assert result["state"] == "Texas"
     assert result["country"] == "United States"
     assert result["timezone"] == "America/Chicago"
+    assert result["fortyguard_supported"] is True
+    assert result["coverage"] == "fortyguard_us"
 
 
-def test_normalize_nominatim_rejects_non_us(monkeypatch):
+def test_normalize_nominatim_non_us_place_keeps_weather_context(monkeypatch):
     monkeypatch.setattr("app.services.location_service._timezone", lambda *_: "Asia/Karachi")
-    with pytest.raises(UnsupportedLocationError):
-        normalize_nominatim_place({
-            "lat": "24.8607",
-            "lon": "67.0011",
-            "display_name": "Karachi, Pakistan",
-            "address": {"city": "Karachi", "state": "Sindh", "country_code": "pk"},
-        })
+    result = normalize_nominatim_place({
+        "lat": "24.8607",
+        "lon": "67.0011",
+        "name": "Karachi",
+        "display_name": "Karachi, Sindh, Pakistan",
+        "address": {
+            "city": "Karachi",
+            "state": "Sindh",
+            "country": "Pakistan",
+            "country_code": "pk",
+        },
+    })
+    assert result["country"] == "Pakistan"
+    assert result["country_code"] == "pk"
+    assert result["fortyguard_supported"] is False
+    assert result["coverage"] == "weather_context_only"
+    assert result["timezone"] == "Asia/Karachi"
 
 
 def test_timezone_lookup_uses_longitude_latitude_order(monkeypatch):

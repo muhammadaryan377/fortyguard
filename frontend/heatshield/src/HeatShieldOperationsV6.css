@@ -1,0 +1,191 @@
+/* HeatShield Operations V6: location-first, global weather context + explicit FortyGuard coverage. */
+.hs-location-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.hs-current-location-button {
+  border: 1px solid rgba(38, 120, 239, .14);
+  border-radius: 18px;
+  padding: 0 16px;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(145deg, #eef6ff, #f8fbff);
+  color: var(--hs-blue);
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(52, 76, 101, .05);
+}
+.hs-current-location-button:disabled { opacity: .58; cursor: wait; }
+
+.hs-global-search-results button {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+.hs-global-search-results em {
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.hs-global-search-results em.supported { background: #eaf8ef; color: #278653; }
+.hs-global-search-results em.weather-only { background: #f3f5f7; color: #697b8c; }
+
+.hs-coverage-strip {
+  margin-top: 14px;
+  border-radius: 18px;
+  padding: 13px 15px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 11px;
+  align-items: start;
+  border: 1px solid transparent;
+}
+.hs-coverage-strip.supported {
+  background: linear-gradient(145deg, #ecf9f1, #f8fdf9);
+  color: #287a4d;
+  border-color: rgba(43, 160, 94, .12);
+}
+.hs-coverage-strip.weather-only {
+  background: linear-gradient(145deg, #fff7e9, #fffdf7);
+  color: #9b6c22;
+  border-color: rgba(207, 151, 54, .14);
+}
+.hs-coverage-strip strong,
+.hs-coverage-strip span { display: block; }
+.hs-coverage-strip strong { font-size: 14px; }
+.hs-coverage-strip span { margin-top: 3px; color: #617284; line-height: 1.45; font-size: 12px; }
+
+.hs-map-screen .product-map-state.unsupported {
+  color: #9a6b22;
+  background: #fff6e7;
+}
+
+.hs-map-coverage-overlay {
+  position: absolute;
+  z-index: 520;
+  top: 16px;
+  left: 16px;
+  max-width: min(360px, calc(100% - 96px));
+  padding: 9px 12px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 250, 238, .94);
+  color: #916522;
+  font-size: 11px;
+  font-weight: 750;
+  box-shadow: 0 10px 26px rgba(46, 63, 83, .12);
+  backdrop-filter: blur(10px);
+}
+
+.heatshield-candidate-pin {
+  width: 34px;
+  height: 34px;
+  border-radius: 50% 50% 50% 10px;
+  transform: rotate(-45deg);
+  background: linear-gradient(145deg, #53ca78, #249b57);
+  border: 3px solid rgba(255,255,255,.98);
+  box-shadow: 0 8px 20px rgba(35, 141, 79, .28);
+  display: grid;
+  place-items: center;
+}
+.heatshield-candidate-pin span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: white;
+  display: block;
+}
+.map-candidate-tooltip.leaflet-tooltip {
+  border: 0;
+  border-radius: 12px;
+  padding: 7px 9px;
+  box-shadow: 0 8px 18px rgba(35,58,83,.15);
+  color: var(--hs-ink);
+}
+.map-candidate-tooltip strong,
+.map-candidate-tooltip span { display: block; }
+.map-candidate-tooltip span { margin-top: 2px; font-size: 10px; color: var(--hs-muted); }
+
+.hs-map-intelligence-grid { align-items: stretch; }
+.hs-map-weather { background: linear-gradient(145deg, #eef7ff, #fbfdff); }
+.hs-map-weather .hs-summary-icon { color: var(--hs-blue); }
+.hs-map-unavailable { background: linear-gradient(145deg, #fff8e9, #fffdf7); }
+.hs-map-unavailable .hs-summary-icon { color: #bd8329; }
+.hs-map-candidate-card { grid-column: 1 / -1; }
+.hs-map-scan-cta { margin-top: 16px; }
+
+.hs-today-coverage-card {
+  margin-top: 18px;
+  padding: 15px 16px;
+  border-radius: 20px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid transparent;
+  box-shadow: 0 10px 26px rgba(48, 74, 99, .05);
+}
+.hs-today-coverage-card.supported {
+  background: linear-gradient(145deg, #edf9f2, #fbfefc);
+  border-color: rgba(44, 166, 102, .11);
+}
+.hs-today-coverage-card.weather-only {
+  background: linear-gradient(145deg, #fff8ec, #fffdf8);
+  border-color: rgba(219, 158, 56, .12);
+}
+.hs-today-coverage-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: white;
+  color: var(--hs-green);
+  box-shadow: 0 8px 18px rgba(48, 74, 99, .08);
+}
+.hs-today-coverage-card.weather-only .hs-today-coverage-icon { color: #c68a2c; }
+.hs-today-coverage-card strong { display: block; font-size: 14px; }
+.hs-today-coverage-card p { margin: 4px 0 0; color: #647588; font-size: 12px; line-height: 1.45; }
+.hs-today-coverage-card button {
+  border: 0;
+  border-radius: 13px;
+  padding: 10px 12px;
+  background: white;
+  color: var(--hs-blue);
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 7px 16px rgba(48, 74, 99, .07);
+}
+.hs-today-coverage-card button:disabled { opacity: .6; cursor: wait; }
+
+@media (max-width: 760px) {
+  .hs-location-tools { grid-template-columns: 1fr; }
+  .hs-current-location-button { min-height: 48px; }
+  .hs-map-candidate-card { grid-column: auto; }
+}
+
+@media (max-width: 560px) {
+  .hs-global-search-results button {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .hs-global-search-results em { grid-column: 2; justify-self: start; }
+  .hs-global-search-results button > svg:last-child { grid-column: 3; grid-row: 1 / span 2; }
+  .hs-today-coverage-card {
+    grid-template-columns: auto 1fr;
+  }
+  .hs-today-coverage-card button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}

@@ -82,7 +82,21 @@ function normalizePpe(value) {
     : "light";
 }
 
+export function locationSupportsFortyGuard(location) {
+  if (typeof location?.fortyguard_supported === "boolean") {
+    return location.fortyguard_supported;
+  }
+  return String(location?.country ?? "").trim().toLowerCase() === "united states";
+}
+
 export function createAgenticCyclePayload(location, options = {}) {
+  if (!locationSupportsFortyGuard(location)) {
+    throw new AgenticApiError(
+      "FortyGuard worksite heat intelligence is currently available for U.S. locations. Select a supported U.S. worksite to build an occupational heat plan.",
+      { code: "fortyguard_location_unsupported" },
+    );
+  }
+
   const workerOptions = options.worker ?? {};
   const taskOptions = options.task ?? {};
   const includeShiftOptimization = Boolean(options.includeShiftOptimization);
@@ -116,7 +130,6 @@ export function createAgenticCyclePayload(location, options = {}) {
       outdoor: true,
       direct_sun: taskOptions.direct_sun ?? true,
     },
-    // Product default: enough comparative timing evidence without unnecessary jobs.
     forecast_offset_hours: options.forecastOffsetHours ?? [1, 3],
     include_spatial_intelligence: options.includeSpatialIntelligence ?? true,
     spatial_search_radius_meters: options.spatialSearchRadiusMeters ?? 600,
@@ -138,7 +151,7 @@ export async function fetchAgenticCycle(location, options = {}) {
 export async function searchLocations(query, options = {}) {
   const value = String(query ?? "").trim();
   if (value.length < 2) {
-    throw new AgenticApiError("Enter a U.S. city, address, or place name.", {
+    throw new AgenticApiError("Enter a city, address, landmark, or coordinates.", {
       code: "invalid_location_query",
     });
   }

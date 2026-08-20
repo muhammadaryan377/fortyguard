@@ -3,7 +3,10 @@ import {
   ArrowRight,
   ClipboardList,
   Droplets,
+  LoaderCircle,
   MapPinned,
+  ShieldAlert,
+  ShieldCheck,
   SunMedium,
   Sunrise,
   Sunset,
@@ -138,9 +141,13 @@ function TimelineCard({ weather }) {
 }
 
 export default function TodayScreen({
+  location,
+  fortyGuardSupported,
   cycle,
   weather,
   work,
+  analysisBusy,
+  onAnalyze,
   onNavigate,
 }) {
   const env = cycle?.current_assessment?.environmental_evidence;
@@ -157,7 +164,9 @@ export default function TodayScreen({
   const cooler = cycle?.spatial_heat?.candidates?.[0];
   const attention = attentionCount(work, cycle);
   const workerAttention = attention > 0 ? 1 : 0;
-  const bandLabel = BAND_LABEL[band] ?? "Heat check needed";
+  const bandLabel = fortyGuardSupported
+    ? BAND_LABEL[band] ?? "Heat check needed"
+    : "Weather context";
   const coolerMiles = cooler ? cooler.straight_line_distance_m / 1609.344 : null;
 
   return (
@@ -169,11 +178,17 @@ export default function TodayScreen({
             <span>Feels like {rounded(feelsLikeF)}°</span>
           </div>
 
-          <div className={`hs-risk-pill ${riskClass(band)}`}>
-            <AlertTriangle size={30} strokeWidth={2.4} />
+          <div className={`hs-risk-pill ${fortyGuardSupported ? riskClass(band) : "is-awaiting"}`}>
+            {fortyGuardSupported ? <AlertTriangle size={30} strokeWidth={2.4} /> : <ShieldAlert size={30} strokeWidth={2.2} />}
             <div>
               <strong>{bandLabel}</strong>
-              <span>{cycle ? `Heat index: ${rounded(heatIndexF)}°F` : "Run the worksite heat check"}</span>
+              <span>
+                {!fortyGuardSupported
+                  ? "FortyGuard heat intelligence is not available at this location"
+                  : cycle
+                    ? `Heat index: ${rounded(heatIndexF)}°F`
+                    : "Run the worksite heat check"}
+              </span>
             </div>
           </div>
         </div>
@@ -191,21 +206,49 @@ export default function TodayScreen({
         </div>
       </section>
 
+      <section className={`hs-today-coverage-card ${fortyGuardSupported ? "supported" : "weather-only"}`}>
+        <span className="hs-today-coverage-icon">
+          {fortyGuardSupported ? <ShieldCheck size={23} /> : <ShieldAlert size={23} />}
+        </span>
+        <div>
+          <strong>{fortyGuardSupported ? "FortyGuard is ready for this worksite" : "This place is in weather-context mode"}</strong>
+          <p>
+            {fortyGuardSupported
+              ? cycle
+                ? "Provider-backed worksite heat evidence is loaded. Review the plan or map comparison."
+                : "Scan this location to load hyperlocal heat cells, nearby lower-heat candidates, and the operational recommendation."
+              : `${location?.name || "This location"} can use general weather context. Choose a supported U.S. worksite to unlock FortyGuard occupational heat intelligence.`}
+          </p>
+        </div>
+        {fortyGuardSupported ? (
+          !cycle ? (
+            <button type="button" onClick={onAnalyze} disabled={analysisBusy}>
+              {analysisBusy ? <LoaderCircle className="spinner" size={16} /> : null}
+              {analysisBusy ? "Scanning…" : "Scan worksite"}
+            </button>
+          ) : (
+            <button type="button" onClick={() => onNavigate("plan")}>Review plan</button>
+          )
+        ) : (
+          <button type="button" onClick={() => onNavigate("map")}>Choose U.S. worksite</button>
+        )}
+      </section>
+
       <section className="hs-feature-grid">
-        <button className="hs-feature-card hs-feature-blue" type="button" onClick={() => onNavigate("plan")}>
+        <button className="hs-feature-card hs-feature-blue" type="button" onClick={() => onNavigate(fortyGuardSupported ? "plan" : "map")}>
           <span className="hs-feature-icon"><ClipboardList size={26} /></span>
           <div className="hs-feature-body">
             <strong>Build safer shift plan</strong>
-            <p>{cycle ? `${cycle.agent_decision?.actions?.length ?? 0} recommended controls are ready to review.` : "Create a heat-aware schedule with workload, timing and recovery controls."}</p>
-            <b>{cycle ? "Review plan" : "Create plan"} <ArrowRight size={15} /></b>
+            <p>{!fortyGuardSupported ? "Choose a supported U.S. worksite for an evidence-backed occupational heat plan." : cycle ? `${cycle.agent_decision?.actions?.length ?? 0} recommended controls are ready to review.` : "Create a heat-aware schedule with workload, timing and recovery controls."}</p>
+            <b>{fortyGuardSupported ? cycle ? "Review plan" : "Create plan" : "Choose worksite"} <ArrowRight size={15} /></b>
           </div>
         </button>
 
         <button className="hs-feature-card hs-feature-green" type="button" onClick={() => onNavigate("map")}>
           <span className="hs-feature-icon"><MapPinned size={26} /></span>
           <div className="hs-feature-body">
-            <strong>Nearby cooler recovery area</strong>
-            <p>{cooler ? `Lower-heat candidate about ${coolerMiles.toFixed(1)} miles away.` : "Run a heat check to compare nearby FortyGuard heat cells."}</p>
+            <strong>Nearby lower-heat candidate</strong>
+            <p>{!fortyGuardSupported ? "FortyGuard spatial comparison becomes available after selecting a supported U.S. worksite." : cooler ? `Lower-heat candidate about ${coolerMiles.toFixed(1)} miles away.` : "Run a heat check to compare nearby FortyGuard heat cells."}</p>
             <b>View on map <ArrowRight size={15} /></b>
           </div>
         </button>
@@ -215,7 +258,7 @@ export default function TodayScreen({
           <div className="hs-feature-body">
             <strong>Workers needing attention</strong>
             <div className="hs-worker-count"><em>{workerAttention}</em><span>worker{workerAttention === 1 ? "" : "s"}</span></div>
-            <p>{attention ? `${attention} current work factor${attention === 1 ? "" : "s"} deserve extra review.` : "No additional worker attention flags yet."}</p>
+            <p>{cycle && attention ? `${attention} current work factor${attention === 1 ? "" : "s"} deserve extra review.` : "Run the supported worksite heat check to combine worker context with heat evidence."}</p>
             <b>View worker <ArrowRight size={15} /></b>
           </div>
         </button>

@@ -4,6 +4,7 @@ import { PHOENIX_LOCATION } from "./api/heatshieldApi.js";
 import {
   approveCycleActions,
   fetchAgenticCycle,
+  locationSupportsFortyGuard,
   recheckCycle,
   reverseLocation,
   searchLocations,
@@ -29,13 +30,19 @@ const DEFAULT_WORK = {
   acclimatized: true,
 };
 
+const INITIAL_LOCATION = {
+  ...PHOENIX_LOCATION,
+  display_name: "Phoenix, Arizona, United States",
+  country: "United States",
+  country_code: "us",
+  fortyguard_supported: true,
+  coverage: "fortyguard_us",
+};
+
 export default function ProductApp() {
   const inFlight = useRef(false);
   const [activeTab, setActiveTab] = useState("today");
-  const [location, setLocation] = useState({
-    ...PHOENIX_LOCATION,
-    display_name: "Phoenix, Arizona, United States",
-  });
+  const [location, setLocation] = useState(INITIAL_LOCATION);
   const [query, setQuery] = useState("Phoenix, Arizona");
   const [searchResults, setSearchResults] = useState([]);
   const [locationBusy, setLocationBusy] = useState(false);
@@ -53,6 +60,10 @@ export default function ProductApp() {
   const [verification, setVerification] = useState(null);
 
   const heatmapState = useMemo(() => mapStateFromCycle(cycle), [cycle]);
+  const fortyGuardSupported = useMemo(
+    () => locationSupportsFortyGuard(location),
+    [location],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -80,12 +91,25 @@ export default function ProductApp() {
   }, []);
 
   const chooseLocation = useCallback((next) => {
-    setLocation(next);
-    setQuery(next.display_name || `${next.name}, ${next.city}, ${next.state}`);
+    const normalized = {
+      ...next,
+      fortyguard_supported: locationSupportsFortyGuard(next),
+    };
+    setLocation(normalized);
+    setQuery(
+      normalized.display_name ||
+      [normalized.name, normalized.city, normalized.state, normalized.country]
+        .filter(Boolean)
+        .join(", "),
+    );
     setSearchResults([]);
     resetCycleState();
     setError(null);
-    setMessage("Worksite updated. Run a heat check when the work plan is ready.");
+    setMessage(
+      normalized.fortyguard_supported
+        ? "Location selected. FortyGuard worksite heat intelligence is available here."
+        : "Location selected. Weather context is available here; choose a U.S. worksite to unlock FortyGuard heat intelligence.",
+    );
   }, [resetCycleState]);
 
   async function findLocation() {
@@ -100,7 +124,7 @@ export default function ProductApp() {
       const result = await searchLocations(query);
       const items = result?.results ?? [];
       setSearchResults(items);
-      if (!items.length) setError("No supported U.S. worksite matched that search.");
+      if (!items.length) setError("No location matched that search.");
     } catch (lookupError) {
       setError(lookupError?.message ?? "Location search failed.");
     } finally {
@@ -120,7 +144,49 @@ export default function ProductApp() {
     }
   }
 
+  async function useCurrentLocation() {
+    if (!window.navigator?.geolocation) {
+      setError("This browser does not provide location access. Search or pick a point on the map instead.");
+      return;
+    }
+
+    setLocationBusy(true);
+    setError(null);
+    try {
+      const position = await new Promise((resolve, reject) => {
+        window.navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 12_000,
+          maximumAge: 60_000,
+        });
+      });
+      const next = await reverseLocation(
+        position.coords.latitude,
+        position.coords.longitude,
+      );
+      chooseLocation({
+        ...next,
+        location_source: "browser_geolocation+openstreetmap_nominatim",
+      });
+      setActiveTab("map");
+    } catch (locationError) {
+      const denied = locationError?.code === 1;
+      setError(
+        denied
+          ? "Location permission was not granted. Search or tap the map to choose a place instead."
+          : locationError?.message ?? "Your current location could not be resolved.",
+      );
+    } finally {
+      setLocationBusy(false);
+    }
+  }
+
   async function analyze() {
+    if (!fortyGuardSupported) {
+      setError("FortyGuard worksite heat intelligence is currently available for U.S. locations. Choose a supported U.S. worksite on the map to run the heat analysis.");
+      setActiveTab("map");
+      return;
+    }
     if (inFlight.current) return;
     inFlight.current = true;
     setAnalysisBusy(true);
@@ -162,7 +228,7 @@ export default function ProductApp() {
           .filter((action) => action.status === "proposed")
           .map((action) => action.action_id),
       );
-      setMessage("Heat plan ready. Review the recommended controls before approval.");
+      setMessage("FortyGuard heat evidence is ready. Review the recommended controls before approval.");
     } catch (analysisError) {
       setCycle(null);
       setSelected([]);
@@ -240,6 +306,7 @@ export default function ProductApp() {
 
   const shared = {
     location,
+    fortyGuardSupported,
     cycle,
     weather,
     weatherBusy,
@@ -259,6 +326,7 @@ export default function ProductApp() {
     onVerify: verifyNow,
     onRefresh: refreshPlan,
     onNavigate: setActiveTab,
+    onUseCurrentLocation: useCurrentLocation,
   };
 
   return (
