@@ -1,0 +1,68 @@
+.spinner { animation: hsSpin .8s linear infinite; }
+@keyframes hsSpin { to { transform: rotate(360deg); } }
+
+@media (max-width: 760px) {
+  .hs-page { padding: 0; }
+  .hs-app-frame { min-height: 100vh; border-radius: 0; border: 0; }
+  .hs-header { padding: 22px 18px 20px; }
+  .hs-content { padding: 18px 14px 105px; }
+  .hs-brand strong { font-size: 25px; }
+  .hs-location-button small { display: none; }
+  .hs-hero-main { grid-template-columns: 1fr; }
+  .hs-big-temp strong { font-size: 74px; }
+  .hs-hero-stats { grid-template-columns: repeat(2, 1fr); }
+  .hs-feature-grid, .hs-map-summary-grid, .hs-team-summary { grid-template-columns: 1fr; }
+  .hs-feature-card { min-height: auto; }
+  .hs-map-screen .product-map-header { display: block; }
+  .hs-map-screen .product-map-state { margin-top: 10px; }
+  .hs-map-screen .product-map-stage { height: 420px; }
+  .hs-work-form { grid-template-columns: 1fr 1fr; }
+  .hs-work-form label.wide { grid-column: span 2; }
+  .hs-approval-card { grid-template-columns: 1fr; align-items: stretch; }
+  .hs-worker-card { grid-template-columns: auto 1fr; }
+  .hs-worker-risk { grid-column: 1 / -1; flex-direction: row; max-width: none; justify-content: center; }
+  .hs-worker-guidance, .hs-refresh-card { grid-template-columns: auto 1fr; }
+  .hs-worker-guidance button, .hs-refresh-card button { grid-column: 1 / -1; justify-self: stretch; justify-content: center; }
+  .hs-alert-hero { grid-template-columns: auto 1fr; }
+  .hs-alert-source { grid-column: 2; justify-self: start; }
+}
+
+@media (max-width: 480px) {
+  .hs-hero-card { padding: 18px; border-radius: 24px; }
+  .hs-risk-pill strong { font-size: 18px; }
+  .hs-feature-grid { gap: 12px; }
+  .hs-work-form { grid-template-columns: 1fr; }
+  .hs-work-form label.wide { grid-column: auto; }
+  .hs-readiness-toggles { grid-template-columns: 1fr; }
+  .hs-action-main { grid-template-columns: auto 1fr; }
+  .hs-action-chip { grid-column: 2; justify-self: start; }
+  .hs-action-how { padding-left: 15px; grid-template-columns: 1fr; }
+  .hs-bottom-nav { padding-inline: 8px; }
+  .hs-bottom-nav button { font-size: 11px; }
+}
+
+/* Leaflet marker + popup styling kept local to the relaxed app so old dashboard CSS is not required. */
+.heatshield-marker-shell { background: transparent !important; border: 0 !important; }
+.heatshield-map-pin {
+  width: 36px;
+  height: 36px;
+  border-radius: 50% 50% 50% 10px;
+  transform: rotate(-45deg);
+  background: linear-gradient(145deg, #ff8b36, #ef5538);
+  border: 3px solid rgba(255,255,255,.95);
+  box-shadow: 0 8px 20px rgba(203,79,44,.28);
+  display: grid;
+  place-items: center;
+}
+.heatshield-map-pin span { width: 10px; height: 10px; border-radius: 50%; background: white; display: block; }
+.map-city-tooltip.leaflet-tooltip { border: 0; border-radius: 12px; padding: 7px 9px; box-shadow: 0 8px 18px rgba(35,58,83,.15); color: var(--hs-ink); }
+.map-city-tooltip strong, .map-city-tooltip span { display: block; }
+.map-city-tooltip span { margin-top: 2px; font-size: 10px; color: var(--hs-muted); }
+.heatshield-popup .leaflet-popup-content { margin: 12px 14px; min-width: 170px; }
+.heatshield-popup .leaflet-popup-content strong, .heatshield-popup .leaflet-popup-content span { display: block; }
+.heatshield-popup .leaflet-popup-content span { margin-top: 4px; color: var(--hs-muted); font-size: 12px; }
+.heat-feature-popup { display: grid; gap: 4px; min-width: 170px; }
+.heat-feature-popup > strong { margin-bottom: 3px; }
+.heat-feature-popup span { color: #53697d; font-size: 12px; }
+.fortyguard-heat-cell { transition: fill-opacity .18s ease; }
+.fortyguard-heat-cell:hover { fill-opacity: .9 !important; }
