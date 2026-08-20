@@ -10,6 +10,7 @@ from app.api.cycle import router as cycle_router
 from app.api.spatial import router as spatial_router
 from app.api.optimize import router as optimize_router
 from app.api.site import router as site_router
+from app.api.location import router as location_router
 
 
 logging.basicConfig(
@@ -24,14 +25,11 @@ app = FastAPI(
         "Agentic hyperlocal heat-risk intelligence "
         "for outdoor worker safety."
     ),
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
-app.include_router(
-    router,
-    prefix="/api",
-)
+app.include_router(router, prefix="/api")
 app.include_router(risk_router, prefix="/api")
 app.include_router(predict_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
@@ -39,6 +37,7 @@ app.include_router(cycle_router, prefix="/api")
 app.include_router(spatial_router, prefix="/api")
 app.include_router(optimize_router, prefix="/api")
 app.include_router(site_router, prefix="/api")
+app.include_router(location_router, prefix="/api")
 
 
 @app.get("/")
@@ -46,5 +45,5 @@ async def root():
     return {
         "project": "HeatShield AI",
         "status": "running",
-        "stage": "ASSESS",
+        "stage": "product_v3",
     }

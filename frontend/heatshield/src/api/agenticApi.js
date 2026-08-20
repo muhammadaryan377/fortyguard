@@ -70,7 +70,26 @@ function cycleEndpoint(cycleId, suffix) {
   return `/api/cycle/${encodeURIComponent(cycleId)}${suffix}`;
 }
 
-export function createAgenticCyclePayload(location, { analysisDatetime = null } = {}) {
+function normalizeWorkload(value) {
+  return ["light", "moderate", "heavy", "very_heavy"].includes(value)
+    ? value
+    : "moderate";
+}
+
+function normalizePpe(value) {
+  return ["none", "light", "moderate", "heavy"].includes(value)
+    ? value
+    : "light";
+}
+
+export function createAgenticCyclePayload(location, options = {}) {
+  const workerOptions = options.worker ?? {};
+  const taskOptions = options.task ?? {};
+  const includeShiftOptimization = Boolean(options.includeShiftOptimization);
+  const shiftTasks = Array.isArray(options.shiftTasks) && options.shiftTasks.length
+    ? options.shiftTasks
+    : null;
+
   return {
     location: {
       site_id: location.site_id,
@@ -82,60 +101,27 @@ export function createAgenticCyclePayload(location, { analysisDatetime = null } 
       longitude: location.longitude,
     },
     timezone_name: location.timezone,
-    analysis_datetime: analysisDatetime,
+    analysis_datetime: options.analysisDatetime ?? null,
     worker: {
-      worker_id: "DEMO-WORKER-01",
+      worker_id: workerOptions.worker_id ?? "WORKER-01",
       site_id: location.site_id,
-      acclimatized: true,
-      ppe_level: "light",
+      acclimatized: workerOptions.acclimatized ?? true,
+      ppe_level: normalizePpe(workerOptions.ppe_level),
     },
     task: {
-      task_id: "DEMO-OUTDOOR-TASK",
-      task_name: "Outdoor urban operations",
-      workload_level: "moderate",
-      exposure_duration_minutes: 60,
+      task_id: taskOptions.task_id ?? "FIELD-TASK-01",
+      task_name: String(taskOptions.task_name ?? "Outdoor field work").trim() || "Outdoor field work",
+      workload_level: normalizeWorkload(taskOptions.workload_level),
+      exposure_duration_minutes: Number(taskOptions.exposure_duration_minutes ?? 60),
       outdoor: true,
-      direct_sun: true,
+      direct_sun: taskOptions.direct_sun ?? true,
     },
-    forecast_offset_hours: [1, 3, 6],
-    include_spatial_intelligence: true,
-    spatial_search_radius_meters: 600,
-    include_shift_optimization: true,
-    shift_tasks: [
-      {
-        task_id: "ZONE-SURVEY",
-        task_name: "Outdoor zone survey",
-        duration_minutes: 45,
-        current_planned_offset_hours: 1,
-        flexible: true,
-        allowed_offset_hours: [1, 3, 6],
-        workload_level: "moderate",
-        direct_sun: true,
-        must_follow_task_ids: [],
-      },
-      {
-        task_id: "EQUIPMENT-CHECK",
-        task_name: "Equipment inspection",
-        duration_minutes: 30,
-        current_planned_offset_hours: 3,
-        flexible: true,
-        allowed_offset_hours: [1, 3, 6],
-        workload_level: "light",
-        direct_sun: false,
-        must_follow_task_ids: [],
-      },
-      {
-        task_id: "FIELD-MAINTENANCE",
-        task_name: "Field maintenance",
-        duration_minutes: 60,
-        current_planned_offset_hours: 6,
-        flexible: true,
-        allowed_offset_hours: [3, 6],
-        workload_level: "heavy",
-        direct_sun: true,
-        must_follow_task_ids: ["ZONE-SURVEY"],
-      },
-    ],
+    // Product default: enough comparative timing evidence without unnecessary jobs.
+    forecast_offset_hours: options.forecastOffsetHours ?? [1, 3],
+    include_spatial_intelligence: options.includeSpatialIntelligence ?? true,
+    spatial_search_radius_meters: options.spatialSearchRadiusMeters ?? 600,
+    include_shift_optimization: includeShiftOptimization && Boolean(shiftTasks),
+    shift_tasks: includeShiftOptimization && shiftTasks ? shiftTasks : null,
   };
 }
 
@@ -147,6 +133,32 @@ export async function fetchAgenticCycle(location, options = {}) {
     timeoutMs: options.timeoutMs ?? AGENT_TIMEOUT_MS,
   });
   return { ...body, request: payload };
+}
+
+export async function searchLocations(query, options = {}) {
+  const value = String(query ?? "").trim();
+  if (value.length < 2) {
+    throw new AgenticApiError("Enter a U.S. city, address, or place name.", {
+      code: "invalid_location_query",
+    });
+  }
+  return request(`/api/location/search?q=${encodeURIComponent(value)}`, {
+    timeoutMs: options.timeoutMs ?? 20_000,
+  });
+}
+
+export async function reverseLocation(latitude, longitude, options = {}) {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    throw new AgenticApiError("Valid map coordinates are required.", {
+      code: "invalid_coordinates",
+    });
+  }
+  return request(
+    `/api/location/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}`,
+    { timeoutMs: options.timeoutMs ?? 20_000 },
+  );
 }
 
 export async function approveCycleActions(cycleId, actionIds, supervisorId, options = {}) {

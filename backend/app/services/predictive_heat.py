@@ -1,7 +1,8 @@
-"""Sequential, provider-backed short-term TCM temperature sampling."""
+"""Parallel, provider-backed short-term TCM temperature sampling."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -49,13 +50,18 @@ def build_forecast_times(
 
 
 def summarize_points(points: list[ForecastTemperaturePoint]) -> HeatOutlookSummary:
-    available = [point for point in points if point.status == "available" and point.temperature_c is not None]
+    available = [
+        point
+        for point in points
+        if point.status == "available" and point.temperature_c is not None
+    ]
     if not available:
         return HeatOutlookSummary(
             available_points=0,
             total_points=len(points),
             trend="insufficient_data",
         )
+
     highest = max(available, key=lambda point: point.temperature_c)
     lowest = min(available, key=lambda point: point.temperature_c)
     if len(available) < 2:
@@ -72,6 +78,7 @@ def summarize_points(points: list[ForecastTemperaturePoint]) -> HeatOutlookSumma
         else:
             trend = "mixed"
         change = temperatures[-1] - temperatures[0]
+
     return HeatOutlookSummary(
         available_points=len(available),
         total_points=len(points),
@@ -103,40 +110,57 @@ def _available_point(
     )
 
 
+async def _sample_one(
+    request: PredictHeatOutlookRequest,
+    offset: int,
+    local_timestamp: datetime,
+    utc_timestamp: datetime,
+    client: FortyGuardClient,
+) -> ForecastTemperaturePoint:
+    date_time = LiveDateTimeFilter(
+        start_date=local_timestamp.date(),
+        start_time=local_timestamp.timetz().replace(tzinfo=None),
+        filter_type=1,
+    )
+    try:
+        verified = await get_verified_temperature(
+            request.location,
+            date_time,
+            client=client,
+        )
+        return _available_point(offset, local_timestamp, utc_timestamp, verified)
+    except FortyGuardError as exc:
+        return ForecastTemperaturePoint(
+            status="unavailable",
+            offset_hours=offset,
+            requested_local_timestamp=local_timestamp,
+            requested_utc_timestamp=utc_timestamp,
+            error_reason=str(exc),
+        )
+
+
 async def create_heat_outlook(
     request: PredictHeatOutlookRequest,
     *,
     client: FortyGuardClient = fortyguard_client,
     now: datetime | None = None,
 ) -> PredictHeatOutlookResponse:
-    """Sample future heatmaps sequentially; preserve every unavailable point."""
+    """Sample requested provider times concurrently while preserving request order."""
 
     current = now or datetime.now(UTC)
     generated_at = current.replace(tzinfo=UTC) if current.tzinfo is None else current.astimezone(UTC)
-    points: list[ForecastTemperaturePoint] = []
-    for offset, local_timestamp, utc_timestamp in build_forecast_times(request, now=generated_at):
-        date_time = LiveDateTimeFilter(
-            start_date=local_timestamp.date(),
-            start_time=local_timestamp.timetz().replace(tzinfo=None),
-            filter_type=1,
+    forecast_times = build_forecast_times(request, now=generated_at)
+
+    # Each point is an independent FortyGuard heatmap job. Running them together
+    # avoids making the user wait for +1h to finish before +3h can even start.
+    points = list(
+        await asyncio.gather(
+            *[
+                _sample_one(request, offset, local_timestamp, utc_timestamp, client)
+                for offset, local_timestamp, utc_timestamp in forecast_times
+            ]
         )
-        try:
-            verified = await get_verified_temperature(
-                request.location,
-                date_time,
-                client=client,
-            )
-            points.append(_available_point(offset, local_timestamp, utc_timestamp, verified))
-        except FortyGuardError as exc:
-            points.append(
-                ForecastTemperaturePoint(
-                    status="unavailable",
-                    offset_hours=offset,
-                    requested_local_timestamp=local_timestamp,
-                    requested_utc_timestamp=utc_timestamp,
-                    error_reason=str(exc),
-                )
-            )
+    )
 
     summary = summarize_points(points)
     status = (
@@ -146,6 +170,7 @@ async def create_heat_outlook(
         if summary.available_points == summary.total_points
         else "partial"
     )
+
     return PredictHeatOutlookResponse(
         status=status,
         location=request.location,
