@@ -1,6 +1,10 @@
 import pytest
 
-from app.services.location_service import UnsupportedLocationError, normalize_nominatim_place
+from app.services.location_service import (
+    UnsupportedLocationError,
+    _timezone,
+    normalize_nominatim_place,
+)
 
 
 def test_normalize_nominatim_us_place_builds_heatshield_location(monkeypatch):
@@ -31,3 +35,16 @@ def test_normalize_nominatim_rejects_non_us(monkeypatch):
             "display_name": "Karachi, Pakistan",
             "address": {"city": "Karachi", "state": "Sindh", "country_code": "pk"},
         })
+
+
+def test_timezone_lookup_uses_longitude_latitude_order(monkeypatch):
+    seen = {}
+
+    def fake_get_tz(longitude, latitude):
+        seen["coordinates"] = (longitude, latitude)
+        return "America/Phoenix"
+
+    monkeypatch.setattr("app.services.location_service.get_tz", fake_get_tz)
+
+    assert _timezone(33.4484, -112.0740) == "America/Phoenix"
+    assert seen["coordinates"] == (-112.0740, 33.4484)

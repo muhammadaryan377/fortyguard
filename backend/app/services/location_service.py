@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from timezonefinder import TimezoneFinder
+from tzfpy import get_tz
 
 NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
 NOMINATIM_HEADERS = {
@@ -17,7 +17,6 @@ NOMINATIM_HEADERS = {
     "Accept-Language": "en",
 }
 _TIMEOUT = httpx.Timeout(12.0)
-_TZ = TimezoneFinder(in_memory=True)
 
 
 class LocationLookupError(RuntimeError):
@@ -41,7 +40,8 @@ def _site_id(latitude: float, longitude: float) -> str:
 
 
 def _timezone(latitude: float, longitude: float) -> str:
-    timezone = _TZ.timezone_at(lat=latitude, lng=longitude)
+    # tzfpy expects coordinates in (longitude, latitude) order.
+    timezone = get_tz(longitude, latitude)
     if not timezone:
         raise LocationLookupError("Unable to determine the local timezone for this location")
     return timezone
