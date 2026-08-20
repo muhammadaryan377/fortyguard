@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowRight,
   ClipboardList,
   Droplets,
@@ -8,139 +9,219 @@ import {
   Sunset,
   Users,
   Wind,
-  Zap,
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
-import { BAND_LABEL, finite, metric } from "../productUtils.js";
+import { BAND_LABEL, finite } from "../productUtils.js";
 
-function formatClock(value) {
-  if (!value) return "--";
+function cToF(value) {
+  const parsed = finite(value);
+  return parsed === null ? null : (parsed * 9) / 5 + 32;
+}
+
+function kmhToMph(value) {
+  const parsed = finite(value);
+  return parsed === null ? null : parsed * 0.621371;
+}
+
+function rounded(value) {
+  return finite(value) === null ? "--" : Math.round(Number(value));
+}
+
+function timeParts(value) {
+  if (!value) return null;
   const text = String(value);
   const time = text.includes("T") ? text.split("T")[1] : text;
-  return time?.slice(0, 5) || "--";
+  const [hourText, minuteText = "00"] = (time || "").split(":");
+  const hour = Number(hourText);
+  if (!Number.isFinite(hour)) return null;
+  return { hour, minute: Number(minuteText) || 0 };
+}
+
+function formatTime(value, includeMinutes = true) {
+  const parts = timeParts(value);
+  if (!parts) return "--";
+  const period = parts.hour >= 12 ? "PM" : "AM";
+  const hour12 = parts.hour % 12 || 12;
+  if (!includeMinutes || parts.minute === 0) return `${hour12} ${period}`;
+  return `${hour12}:${String(parts.minute).padStart(2, "0")} ${period}`;
+}
+
+function peakWindowLabel(hourly) {
+  const usable = (hourly ?? [])
+    .slice(0, 10)
+    .map((item, index) => ({ index, item, temp: finite(item.temperature_2m_c) }))
+    .filter((item) => item.temp !== null);
+
+  if (!usable.length) return "Peak window loading";
+  const peak = usable.reduce((best, item) => (item.temp > best.temp ? item : best), usable[0]);
+  const source = (hourly ?? []).slice(0, 10);
+  const start = source[Math.max(0, peak.index - 1)];
+  const end = source[Math.min(source.length - 1, peak.index + 2)];
+  const startText = formatTime(start?.local_time, false);
+  const endText = formatTime(end?.local_time, false);
+  return startText === endText ? `Peak heat around ${startText}` : `Peak heat expected ${startText}–${endText}`;
 }
 
 function attentionCount(work, cycle) {
   let count = 0;
   if (!work?.acclimatized) count += 1;
   if (["heavy", "very_heavy"].includes(work?.workload)) count += 1;
-  if (work?.directSun && cycle?.current_assessment?.screening?.band && cycle.current_assessment.screening.band !== "below_caution") count += 1;
+  if (
+    work?.directSun &&
+    cycle?.current_assessment?.screening?.band &&
+    cycle.current_assessment.screening.band !== "below_caution"
+  ) {
+    count += 1;
+  }
   return count;
 }
 
-function TimelineCard({ weather, cycle }) {
-  const hourly = (weather?.hourly ?? []).slice(0, 7);
-  const chartData = hourly.map((item, index) => ({
-    label: index === 0 ? "Now" : formatClock(item.local_time),
-    temp: finite(item.temperature_2m_c),
-  })).filter((item) => item.temp !== null);
+function riskClass(band) {
+  if (["danger", "extreme_danger"].includes(band)) return "is-danger";
+  if (["caution", "extreme_caution"].includes(band)) return "is-caution";
+  if (band === "below_caution") return "is-lower";
+  return "is-awaiting";
+}
 
-  const providerPoints = cycle?.heat_outlook?.points ?? [];
-  const hottest = providerPoints
-    .filter((point) => point.status === "available" && finite(point.temperature_c) !== null)
-    .sort((a, b) => b.temperature_c - a.temperature_c)[0];
+function TimelineCard({ weather }) {
+  const hourly = (weather?.hourly ?? []).slice(0, 7);
+  const chartData = hourly
+    .map((item, index) => ({
+      label: index === 0 ? "Now" : formatTime(item.local_time, false),
+      temp: cToF(item.temperature_2m_c),
+    }))
+    .filter((item) => item.temp !== null);
 
   return (
     <article className="hs-feature-card hs-timeline-card">
-      <div className="hs-card-heading">
-        <div><span>Today’s heat timeline</span><strong>{hottest ? `Peak sample ${metric(hottest.temperature_c)}°C` : "Weather context"}</strong></div>
-      </div>
+      <div className="hs-timeline-heading">Today’s heat timeline</div>
       <div className="hs-mini-chart">
         {chartData.length > 1 ? (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 8, right: 2, left: 2, bottom: 0 }}>
+            <AreaChart data={chartData} margin={{ top: 10, right: 4, left: 4, bottom: 0 }}>
               <defs>
-                <linearGradient id="hsHeatGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="currentColor" stopOpacity={0.24} />
-                  <stop offset="100%" stopColor="currentColor" stopOpacity={0.02} />
+                <linearGradient id="hsTodayHeatGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ff7043" stopOpacity={0.34} />
+                  <stop offset="100%" stopColor="#ffb55f" stopOpacity={0.03} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="label" axisLine={false} tickLine={false} interval="preserveStartEnd" tick={{ fontSize: 10 }} />
-              <Tooltip formatter={(value) => [`${Number(value).toFixed(1)}°C`, "Air temp"]} />
-              <Area dataKey="temp" type="monotone" stroke="currentColor" strokeWidth={2.4} fill="url(#hsHeatGradient)" />
+              <XAxis
+                dataKey="label"
+                axisLine={false}
+                tickLine={false}
+                interval="preserveStartEnd"
+                tick={{ fontSize: 10, fill: "#405970" }}
+              />
+              <Tooltip formatter={(value) => [`${Math.round(Number(value))}°F`, "Air temperature"]} />
+              <Area
+                dataKey="temp"
+                type="monotone"
+                stroke="#ff6b35"
+                strokeWidth={2.6}
+                fill="url(#hsTodayHeatGradient)"
+                dot={{ r: 4, strokeWidth: 2, stroke: "#ffffff", fill: "#ff8a30" }}
+                activeDot={{ r: 5, strokeWidth: 2, stroke: "#ffffff", fill: "#ef4c38" }}
+              />
             </AreaChart>
           </ResponsiveContainer>
-        ) : <div className="hs-empty-mini">Hourly context will appear when available.</div>}
+        ) : (
+          <div className="hs-empty-mini">Hourly weather will appear when available.</div>
+        )}
+      </div>
+      <div className="hs-timeline-legend" aria-label="Heat timeline legend">
+        <span><i className="lower" />Lower</span>
+        <span><i className="caution" />Caution</span>
+        <span><i className="extreme" />Higher heat</span>
       </div>
     </article>
   );
 }
 
 export default function TodayScreen({
-  location,
   cycle,
   weather,
-  weatherBusy,
   work,
-  analysisBusy,
-  onAnalyze,
   onNavigate,
 }) {
   const env = cycle?.current_assessment?.environmental_evidence;
   const screening = cycle?.current_assessment?.screening;
   const currentWeather = weather?.current ?? {};
   const today = weather?.daily?.[0] ?? {};
-  const primaryTemp = finite(env?.temperature_c) ?? finite(currentWeather.temperature_2m_c);
-  const displayTemp = primaryTemp === null ? "--" : Math.round(primaryTemp);
+  const band = screening?.band;
+
+  const airTempF = cToF(currentWeather.temperature_2m_c);
+  const feelsLikeF = cToF(currentWeather.apparent_temperature_c);
+  const heatIndexF = cToF(env?.heat_index_c);
+  const humidity = finite(currentWeather.relative_humidity_percent ?? env?.relative_humidity);
+  const windMph = kmhToMph(currentWeather.wind_speed_kmh);
   const cooler = cycle?.spatial_heat?.candidates?.[0];
   const attention = attentionCount(work, cycle);
-  const band = BAND_LABEL[screening?.band] ?? (cycle ? "Heat screening unavailable" : "Run a heat check");
+  const workerAttention = attention > 0 ? 1 : 0;
+  const bandLabel = BAND_LABEL[band] ?? "Heat check needed";
+  const coolerMiles = cooler ? cooler.straight_line_distance_m / 1609.344 : null;
 
   return (
     <div className="hs-screen hs-today-screen">
       <section className="hs-hero-card">
-        <div className="hs-hero-topline">
-          <span>{cycle ? "FortyGuard heat" : weatherBusy ? "Loading worksite context" : "Worksite preview"}</span>
-          <span>{location?.timezone}</span>
-        </div>
         <div className="hs-hero-main">
-          <div className="hs-big-temp"><strong>{displayTemp}°</strong><span>{cycle ? "Current worksite" : "Air temperature"}</span></div>
-          <div className="hs-risk-pill">
-            <SunMedium size={21} />
-            <div><strong>{band}</strong><span>{cycle ? `Heat Index ${metric(env?.heat_index_c)}°C` : "HeatShield will confirm with FortyGuard"}</span></div>
+          <div className="hs-big-temp" title="Open-Meteo air temperature at 2 m">
+            <strong>{rounded(airTempF)}<sup>°F</sup></strong>
+            <span>Feels like {rounded(feelsLikeF)}°</span>
+          </div>
+
+          <div className={`hs-risk-pill ${riskClass(band)}`}>
+            <AlertTriangle size={30} strokeWidth={2.4} />
+            <div>
+              <strong>{bandLabel}</strong>
+              <span>{cycle ? `Heat index: ${rounded(heatIndexF)}°F` : "Run the worksite heat check"}</span>
+            </div>
           </div>
         </div>
-        <p className="hs-hero-summary">
-          {cycle
-            ? cycle.agent_decision?.reasoning_summary?.thermal_interpretation || "Current heat evidence is ready for an operational plan."
-            : "Describe the work, then run a heat check for a provider-backed plan."}
-        </p>
+
+        <div className="hs-peak-line">
+          <SunMedium size={27} />
+          <strong>{peakWindowLabel(weather?.hourly)}</strong>
+        </div>
+
         <div className="hs-hero-stats">
-          <div><Droplets size={18} /><strong>{metric(env?.relative_humidity ?? currentWeather.relative_humidity_percent, 0)}%</strong><span>Humidity</span></div>
-          <div><Wind size={18} /><strong>{metric(currentWeather.wind_speed_kmh, 0)} km/h</strong><span>Wind</span></div>
-          <div><Sunrise size={18} /><strong>{formatClock(today.sunrise)}</strong><span>Sunrise</span></div>
-          <div><Sunset size={18} /><strong>{formatClock(today.sunset)}</strong><span>Sunset</span></div>
+          <div><Droplets size={25} /><strong>{rounded(humidity)}%</strong><span>Humidity</span></div>
+          <div><Wind size={25} /><strong>{rounded(windMph)} mph</strong><span>Wind</span></div>
+          <div><Sunrise size={25} /><strong>{formatTime(today.sunrise)}</strong><span>Sunrise</span></div>
+          <div><Sunset size={25} /><strong>{formatTime(today.sunset)}</strong><span>Sunset</span></div>
         </div>
       </section>
-
-      {!cycle ? (
-        <button className="hs-primary-cta" type="button" onClick={onAnalyze} disabled={analysisBusy}>
-          <Zap size={19} />
-          <span><strong>{analysisBusy ? "Building heat plan…" : "Check heat & build plan"}</strong><small>FortyGuard heat + nearby options + operational agent plan</small></span>
-          <ArrowRight size={18} />
-        </button>
-      ) : null}
 
       <section className="hs-feature-grid">
         <button className="hs-feature-card hs-feature-blue" type="button" onClick={() => onNavigate("plan")}>
-          <span className="hs-feature-icon"><ClipboardList size={21} /></span>
-          <div><strong>{cycle ? "Review safer work plan" : "Build safer shift plan"}</strong><p>{cycle ? `${cycle.agent_decision?.actions?.length ?? 0} recommended controls ready for review.` : "Set workload, PPE, duration and sun exposure."}</p><b>{cycle ? "Review plan" : "Set work conditions"} <ArrowRight size={14} /></b></div>
+          <span className="hs-feature-icon"><ClipboardList size={26} /></span>
+          <div className="hs-feature-body">
+            <strong>Build safer shift plan</strong>
+            <p>{cycle ? `${cycle.agent_decision?.actions?.length ?? 0} recommended controls are ready to review.` : "Create a heat-aware schedule with workload, timing and recovery controls."}</p>
+            <b>{cycle ? "Review plan" : "Create plan"} <ArrowRight size={15} /></b>
+          </div>
         </button>
 
         <button className="hs-feature-card hs-feature-green" type="button" onClick={() => onNavigate("map")}>
-          <span className="hs-feature-icon"><MapPinned size={21} /></span>
-          <div><strong>Nearby recovery option</strong><p>{cooler ? `${metric(cooler.cooler_by_c)}°C cooler provider tile about ${Math.round(cooler.straight_line_distance_m)} m away.` : "Run a heat check to compare nearby FortyGuard heat cells."}</p><b>View map <ArrowRight size={14} /></b></div>
+          <span className="hs-feature-icon"><MapPinned size={26} /></span>
+          <div className="hs-feature-body">
+            <strong>Nearby cooler recovery area</strong>
+            <p>{cooler ? `Lower-heat candidate about ${coolerMiles.toFixed(1)} miles away.` : "Run a heat check to compare nearby FortyGuard heat cells."}</p>
+            <b>View on map <ArrowRight size={15} /></b>
+          </div>
         </button>
 
         <button className="hs-feature-card hs-feature-warm" type="button" onClick={() => onNavigate("team")}>
-          <span className="hs-feature-icon"><Users size={21} /></span>
-          <div><strong>Worker conditions</strong><p>{attention ? `${attention} current work factor${attention === 1 ? "" : "s"} deserve extra attention.` : "Current worker setup has no additional attention flags."}</p><b>Review worker <ArrowRight size={14} /></b></div>
+          <span className="hs-feature-icon"><Users size={26} /></span>
+          <div className="hs-feature-body">
+            <strong>Workers needing attention</strong>
+            <div className="hs-worker-count"><em>{workerAttention}</em><span>worker{workerAttention === 1 ? "" : "s"}</span></div>
+            <p>{attention ? `${attention} current work factor${attention === 1 ? "" : "s"} deserve extra review.` : "No additional worker attention flags yet."}</p>
+            <b>View worker <ArrowRight size={15} /></b>
+          </div>
         </button>
 
-        <TimelineCard weather={weather} cycle={cycle} />
+        <TimelineCard weather={weather} />
       </section>
-
-      <div className="hs-source-note">FortyGuard controls heat evidence. Weather context is supporting information only.</div>
     </div>
   );
 }
