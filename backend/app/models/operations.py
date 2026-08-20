@@ -54,6 +54,35 @@ class AgentEvidence(BaseModel):
     shift_optimization: dict[str, Any] | None = None
 
 
+class AgentEvidenceSignal(BaseModel):
+    signal: str
+    source: str
+    value: Any = None
+    implication: str
+    confidence: Literal["high", "medium", "low"]
+
+
+class AgentEligibilityTrace(BaseModel):
+    tool_name: str
+    action_type: ActionType
+    eligible: bool
+    safe_reason: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    preview_details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentReasoningSummary(BaseModel):
+    objective: str
+    urgency: Literal["monitor", "elevated", "high", "critical", "unknown"]
+    evidence_confidence: Literal["high", "medium", "low"]
+    thermal_interpretation: str
+    evidence_signals: list[AgentEvidenceSignal]
+    eligible_action_types: list[ActionType]
+    selected_action_types: list[ActionType]
+    guardrails: list[str]
+    uncertainty: list[str]
+
+
 class AgentAction(BaseModel):
     action_id: str
     action_type: ActionType
@@ -95,6 +124,8 @@ class AgentDecisionResponse(BaseModel):
     task_id: str
     actions: list[AgentAction]
     tool_trace: list[AgentToolTrace]
+    eligibility_trace: list[AgentEligibilityTrace]
+    reasoning_summary: AgentReasoningSummary
     current_evidence_summary: dict[str, Any]
     forecast_evidence_summary: dict[str, Any]
     spatial_evidence_summary: dict[str, Any] | None = None

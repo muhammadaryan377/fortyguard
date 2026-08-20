@@ -1,0 +1,84 @@
+.agent-command-panel { padding: 18px; overflow: hidden; }
+.mission-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.mission-header h2 { margin: 0; color: #f6f9fd; font-size: 18px; }
+.mission-header p { max-width: 780px; margin: 6px 0 0; color: #718399; font-size: 9px; line-height: 1.6; }
+.mission-status-cluster { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.mission-chip { min-height: 29px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; color: #a7b5c6; background: rgba(8, 21, 36, .78); font-size: 8px; }
+.mission-chip svg { color: #9e83ff; }
+.urgency-high, .urgency-critical { color: #ffad90; border-color: rgba(255, 95, 55, .24); }
+.mission-stage-rail { margin: 17px 0; display: grid; grid-template-columns: repeat(8, minmax(80px, 1fr)); gap: 4px; }
+.mission-stage { min-height: 55px; padding: 8px; position: relative; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 9px; background: rgba(5, 16, 29, .78); }
+.mission-stage i { position: absolute; right: -6px; width: 8px; height: 1px; background: #33465b; z-index: 2; }
+.mission-stage-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: #61748a; background: rgba(255,255,255,.03); }
+.mission-stage div { display: grid; gap: 2px; }
+.mission-stage strong { color: #aebdce; font-size: 8px; }
+.mission-stage small { color: #53677e; font-size: 7px; text-transform: uppercase; }
+.stage-complete { border-color: rgba(83, 223, 128, .22); }
+.stage-complete .mission-stage-icon { color: #59df84; background: rgba(83, 223, 128, .08); }
+.stage-active { border-color: rgba(255, 174, 35, .3); box-shadow: inset 0 0 20px rgba(255, 174, 35, .03); }
+.stage-active .mission-stage-icon { color: #ffb42a; }
+.stage-blocked .mission-stage-icon { color: #ff6958; }
+.mission-empty { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #60758c; }
+.mission-empty strong { color: #aebdce; font-size: 11px; }
+.mission-empty span { font-size: 9px; }
+.mission-layout { display: grid; grid-template-columns: 1.15fr .85fr; gap: 11px; }
+.mission-column, .mission-actions-section, .audit-console { padding: 14px; border: 1px solid var(--border); border-radius: 11px; background: rgba(6, 18, 31, .74); }
+.mission-block-title { display: flex; align-items: center; gap: 8px; }
+.mission-block-title > svg { color: #8b75ff; }
+.mission-block-title div { display: grid; }
+.mission-block-title strong { color: #dfe7f2; font-size: 10px; }
+.mission-block-title small { margin-top: 2px; color: #63768c; font-size: 7px; }
+.mission-interpretation { min-height: 50px; margin: 12px 0; color: #8fa1b5; font-size: 9px; line-height: 1.65; }
+.reason-signal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+.reason-signal { padding: 10px; border: 1px solid rgba(126,157,194,.12); border-radius: 9px; background: rgba(8, 22, 37, .76); }
+.reason-signal > div { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.reason-signal strong { color: #c9d5e3; font-size: 8px; }
+.reason-signal small { display: block; margin-top: 3px; color: #52677e; font-size: 7px; }
+.reason-signal b { display: block; margin-top: 8px; color: #f2f7fd; font-size: 12px; font-weight: 700; }
+.reason-signal p { margin: 5px 0 0; color: #70849a; font-size: 7px; line-height: 1.5; }
+.confidence-chip { padding: 2px 5px; border-radius: 4px; font-size: 6px; text-transform: uppercase; }
+.confidence-high { color: #62df8b; background: rgba(83,223,128,.08); }
+.confidence-medium { color: #ffc054; background: rgba(255,176,34,.08); }
+.confidence-low { color: #ff7b66; background: rgba(255,91,70,.08); }
+.firewall-list { margin-top: 12px; display: grid; gap: 6px; }
+.firewall-row { min-height: 45px; padding: 8px 9px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.firewall-row.allowed { border-color: rgba(83,223,128,.18); background: rgba(48,150,83,.05); }
+.firewall-row.blocked { opacity: .72; background: rgba(120,50,45,.035); }
+.firewall-row > svg { color: #65798f; }
+.firewall-row.allowed > svg { color: #55db80; }
+.firewall-row div { display: grid; gap: 2px; }
+.firewall-row strong { color: #bdc9d7; font-size: 8px; }
+.firewall-row small { color: #5d7188; font-size: 7px; }
+.firewall-row > span { color: #63788e; font-size: 6px; font-weight: 800; letter-spacing: .7px; }
+.firewall-row.allowed > span { color: #58dc83; }
+.mission-actions-section { margin-top: 11px; }
+.mission-action-grid { margin-top: 11px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+.mission-action { min-height: 62px; padding: 10px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--border); border-radius: 9px; color: inherit; background: rgba(7,20,34,.72); text-align: left; cursor: pointer; }
+.mission-action.selected { border-color: rgba(113, 93, 255, .35); background: rgba(105, 83, 255, .07); }
+.mission-action-check { width: 25px; height: 25px; flex: 0 0 auto; display: grid; place-items: center; color: #9d85ff; }
+.mission-action-check > span { width: 13px; height: 13px; border: 1px solid #53677f; border-radius: 50%; }
+.mission-action div { display: grid; gap: 4px; }
+.mission-action strong { color: #d7e0eb; font-size: 9px; }
+.mission-action small { color: #61758b; font-size: 7px; line-height: 1.4; }
+.mission-no-actions { padding: 18px; color: #65798f; font-size: 9px; }
+.mission-controls { margin-top: 11px; display: flex; flex-wrap: wrap; gap: 7px; }
+.mission-controls label { min-width: 170px; min-height: 34px; padding: 0 9px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 8px; background: rgba(5,16,28,.75); }
+.mission-controls label svg { color: #7b8ea4; }
+.mission-controls input { width: 100%; border: 0; outline: 0; color: #dbe5f0; background: transparent; font-size: 8px; }
+.mission-controls button { min-height: 34px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; color: #aab9c9; background: rgba(9,24,40,.78); cursor: pointer; font-size: 8px; font-weight: 700; }
+.mission-controls button:disabled { opacity: .42; cursor: not-allowed; }
+.mission-controls .mission-primary { color: #fff; border-color: rgba(255,90,44,.26); background: linear-gradient(135deg,#ff642c,#ef303e); }
+.mission-controls .mission-loop { color: #f1edff; border-color: rgba(139,117,255,.26); background: linear-gradient(135deg,rgba(103,74,220,.72),rgba(69,55,163,.78)); }
+.verification-strip, .mission-error { margin-top: 10px; padding: 10px; display: flex; align-items: center; gap: 8px; border-radius: 8px; font-size: 8px; }
+.verification-strip { color: #75df98; border: 1px solid rgba(83,223,128,.18); background: rgba(48,150,83,.05); }
+.verification-strip div { display: grid; gap: 2px; }
+.verification-strip span { color: #6c8197; }
+.mission-error { color: #ffad9f; border: 1px solid rgba(255,91,70,.22); background: rgba(120,42,35,.08); }
+.audit-console { margin-top: 11px; }
+.audit-list { margin-top: 10px; display: grid; gap: 4px; }
+.audit-row { min-height: 30px; padding: 6px 8px; display: grid; grid-template-columns: 70px 150px 1fr; align-items: center; gap: 8px; border-radius: 6px; background: rgba(3,13,24,.72); }
+.audit-row span, .audit-row small { color: #587087; font-size: 7px; }
+.audit-row strong { color: #9fb0c3; font-size: 7px; }
+.audit-empty { color: #5d7289; font-size: 8px; }
+@media (max-width: 1150px) { .mission-stage-rail { grid-template-columns: repeat(4,1fr); } .mission-layout { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .mission-header { flex-direction: column; } .mission-status-cluster { justify-content: flex-start; } .mission-stage-rail, .reason-signal-grid, .mission-action-grid { grid-template-columns: 1fr 1fr; } .audit-row { grid-template-columns: 60px 1fr; } .audit-row small { grid-column: 1 / -1; } }

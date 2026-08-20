@@ -1,0 +1,57 @@
+.v2-shell { min-height: 100vh; }
+.v2-sidebar { background: radial-gradient(circle at 25% 5%, rgba(120, 91, 255, .10), transparent 24%), radial-gradient(circle at 70% 18%, rgba(255, 80, 33, .08), transparent 25%), var(--sidebar); }
+.v2-nav-block { display: grid; gap: 5px; }
+.v2-nav-block .nav-item { cursor: default; }
+.v2-main { overflow: hidden; }
+.v2-heading p { max-width: 780px; }
+.v2-hero-state { margin-bottom: 11px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.v2-hero-state > div { min-height: 76px; padding: 13px 14px; display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 9px; border: 1px solid var(--border); border-radius: 12px; background: linear-gradient(145deg, rgba(11, 27, 45, .86), rgba(5, 14, 25, .96)); }
+.v2-hero-state svg { grid-row: 1 / span 2; color: #9b86ff; }
+.v2-hero-state span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .8px; }
+.v2-hero-state strong { color: #eef5ff; font-size: 11px; }
+.v2-metrics { grid-template-columns: minmax(190px, 1.25fr) repeat(4, minmax(145px, 1fr)); }
+.v2-screening-value { margin-top: 19px; color: #fff; font-size: 21px; font-weight: 760; letter-spacing: -.7px; }
+.v2-grid-primary { margin-top: 11px; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(330px, .85fr); gap: 11px; align-items: stretch; }
+.v2-grid-primary .map-panel { min-height: 510px; }
+.v2-thermal-panel { min-height: 510px; }
+.v2-grid-secondary { margin-top: 11px; display: grid; grid-template-columns: 1.2fr .9fr .9fr; gap: 11px; }
+.v2-forecast-panel, .v2-mini-panel, .v2-thermal-panel { padding: 17px; }
+.v2-risk-banner { margin-top: 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.v2-risk-banner > div, .v2-science-grid > div { padding: 11px; border: 1px solid rgba(126, 157, 194, .14); border-radius: 10px; background: rgba(8, 21, 36, .72); }
+.v2-risk-banner small, .v2-science-grid span, .v2-science-grid small { display: block; color: #687b90; font-size: 8px; }
+.v2-risk-banner strong { display: block; margin-top: 5px; color: #f2f6fb; font-size: 10px; }
+.v2-thermal-copy { margin: 16px 0; min-height: 70px; color: #92a3b6; font-size: 10px; line-height: 1.7; }
+.v2-science-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.v2-science-grid strong { display: block; margin: 5px 0 2px; color: #fff; font-size: 18px; }
+.v2-sample-list { margin-top: 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.v2-sample { padding: 12px; display: grid; gap: 5px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7, 20, 34, .72); }
+.v2-sample.available { border-color: rgba(84, 213, 133, .22); }
+.v2-sample > span { color: #7f91a7; font-size: 9px; }
+.v2-sample strong { color: #f6f9fd; font-size: 18px; }
+.v2-sample small { color: #60748a; font-size: 8px; line-height: 1.45; }
+.v2-candidate-card { margin-top: 14px; padding: 15px; min-height: 118px; display: flex; flex-direction: column; justify-content: center; gap: 7px; border: 1px solid rgba(86, 211, 132, .18); border-radius: 11px; background: linear-gradient(145deg, rgba(36, 114, 73, .12), rgba(7, 20, 34, .75)); }
+.v2-candidate-card strong { color: #effff5; font-size: 14px; }
+.v2-candidate-card span { color: #76e29a; font-size: 10px; }
+.v2-candidate-card small { color: #6e8196; font-size: 8px; line-height: 1.5; }
+.v2-empty { min-height: 290px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; color: #64788e; }
+.v2-empty strong { color: #aebdce; font-size: 11px; }
+.v2-empty span { max-width: 260px; font-size: 9px; line-height: 1.6; }
+.v2-empty.compact { min-height: 116px; }
+.v2-footer { margin-top: 14px; }
+.agent-command-panel { margin-top: 11px; }
+@media (max-width: 1200px) {
+  .v2-hero-state { grid-template-columns: repeat(2, 1fr); }
+  .v2-metrics { grid-template-columns: repeat(3, 1fr); }
+  .v2-grid-primary { grid-template-columns: 1fr; }
+  .v2-grid-secondary { grid-template-columns: 1fr 1fr; }
+  .v2-forecast-panel { grid-column: 1 / -1; }
+}
+@media (max-width: 860px) {
+  .v2-shell { grid-template-columns: 1fr; }
+  .v2-sidebar { display: none; }
+  .v2-main { padding: 0 13px 18px; }
+  .v2-hero-state, .v2-metrics, .v2-grid-secondary { grid-template-columns: 1fr; }
+  .v2-forecast-panel { grid-column: auto; }
+  .topbar { align-items: stretch; padding: 12px 0; flex-direction: column; }
+  .topbar-status { margin-left: 0; }
+}
