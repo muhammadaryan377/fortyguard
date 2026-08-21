@@ -399,7 +399,12 @@ export default function ProductApp() {
       const result = await approveCycleActions(cycle.cycle_id, selected, supervisor);
       setApproval(result);
       const recordedCount = (result.results ?? []).filter((item) => ["executed", "already_executed"].includes(item.status)).length;
-      setMessage(recordedCount ? `${recordedCount} approved control${recordedCount === 1 ? "" : "s"} recorded.` : "No selected control was recorded.");
+      setMessage(
+        recordedCount
+          ? `${recordedCount} control${recordedCount === 1 ? "" : "s"} recorded for this cycle.`
+          : "Approval completed, but no control was recorded. Review the result before continuing.",
+      );
+      setActiveTab("alerts");
     } catch (operationError) {
       setError(operationError?.message ?? "Approval failed.");
     } finally {
