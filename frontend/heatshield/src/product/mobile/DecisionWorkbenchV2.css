@@ -1,0 +1,20 @@
+.hs-di-candidate.selected {
+  border-color: rgba(14, 116, 144, 0.45);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.12), 0 16px 34px rgba(15, 23, 42, 0.08);
+}
+
+.hs-di-candidate-actions {
+  flex-wrap: wrap;
+}
+
+.hs-di-candidate-actions button.select {
+  background: #e0f2fe;
+  color: #075985;
+  border-color: #bae6fd;
+}
+
+.hs-di-candidate.selected .hs-di-candidate-actions button.select {
+  background: #075985;
+  color: #fff;
+  border-color: #075985;
+}
