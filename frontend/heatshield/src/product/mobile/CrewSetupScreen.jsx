@@ -17,7 +17,6 @@ import {
 
 import PlanMapEditor from "./PlanMapEditor.jsx";
 import {
-  CREW_STORAGE_KEY,
   MAX_AGENT_WORKERS,
   TASK_OPTIONS,
   createWorker,
@@ -166,6 +165,7 @@ export default function CrewSetupScreen({ location, onNavigate }) {
       && worker.currentTask.trim()
       && worker.shiftStart
       && worker.shiftEnd
+      && worker.shiftEnd > worker.shiftStart
       && worker.position
       && pointInPolygon(worker.position, site?.polygon ?? [])
     ))
@@ -174,7 +174,7 @@ export default function CrewSetupScreen({ location, onNavigate }) {
 
   function continueToPlan() {
     if (!workersReady) {
-      setLocalError("Every worker needs a map position, area label, shift and current task before planning.");
+      setLocalError("Every worker needs a map position, area label, same-day shift and current task before planning.");
       return;
     }
     onNavigate("plan");
@@ -223,7 +223,7 @@ export default function CrewSetupScreen({ location, onNavigate }) {
         <div className="hs-advanced-card-heading"><div><span>CREW READINESS</span><h2>Ready for worker-specific planning?</h2></div></div>
         <div className="hs-advanced-readiness-grid">
           <article className="ready"><MapPin size={20} /><div><strong>Site locked</strong><span>{site.name}</span></div></article>
-          <article className={workersReady ? "ready" : ""}><Users size={20} /><div><strong>{workersReady ? `${crew.length} workers complete` : "Worker details incomplete"}</strong><span>Map point + shift + job required</span></div></article>
+          <article className={workersReady ? "ready" : ""}><Users size={20} /><div><strong>{workersReady ? `${crew.length} workers complete` : "Worker details incomplete"}</strong><span>Map point + same-day shift + job required</span></div></article>
           <article className={crew.some((worker) => worker.reassignAllowed) ? "ready" : ""}><Clock3 size={20} /><div><strong>{crew.filter((worker) => worker.reassignAllowed).length} flexible worker{crew.filter((worker) => worker.reassignAllowed).length === 1 ? "" : "s"}</strong><span>Eligible for time/task reassignment</span></div></article>
         </div>
       </section>
