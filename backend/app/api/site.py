@@ -1,10 +1,20 @@
 """Supervisor-ready multi-worker site snapshot endpoints."""
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Body, HTTPException
 
 from app.api.cycle import get_store
 from app.api.risk import _provider_error
-from app.models.site import SelectedWorkerCycleRequest, SiteOperationsRequest, SiteOperationsResponse
+from app.models.site import (
+    SelectedWorkerCycleRequest,
+    SiteAgentPlanRequest,
+    SiteAgentPlanResponse,
+    SiteOperationsRequest,
+    SiteOperationsResponse,
+    SiteWorkerAgentResult,
+)
+from app.services.cycle_orchestrator import CycleOrchestrator
 from app.services.site_operations import SiteOperationsOrchestrator
 
 router = APIRouter(prefix="/site", tags=["Multi-worker site intelligence"])
@@ -57,3 +67,58 @@ async def selected_worker_cycle_request(snapshot_id: str, worker_id: str) -> Sel
         return get_site_orchestrator().cycle_request(snapshot_id, worker_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/operations-snapshot/{snapshot_id}/agent-plan", response_model=SiteAgentPlanResponse)
+async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest) -> SiteAgentPlanResponse:
+    """Run bounded worker cycles in deterministic attention order.
+
+    The site snapshot remains the shared supervisor view. Each selected worker
+    cycle deliberately refreshes provider evidence at that worker's submitted
+    coordinates before DeepSeek is allowed to select from server-defined tools.
+    """
+
+    site_orchestrator = get_site_orchestrator()
+    try:
+        snapshot = site_orchestrator.get(snapshot_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    available = {worker.worker_id for worker in snapshot.workers}
+    unknown = [worker_id for worker_id in payload.worker_ids if worker_id not in available]
+    if unknown:
+        raise HTTPException(status_code=404, detail=f"Workers not found in site snapshot: {', '.join(unknown)}")
+
+    requested = set(payload.worker_ids)
+    ordered = [worker_id for worker_id in snapshot.attention_queue if worker_id in requested]
+    cycle_orchestrator = CycleOrchestrator(get_store())
+    results: list[SiteWorkerAgentResult] = []
+
+    try:
+        for worker_id in ordered:
+            helper = site_orchestrator.cycle_request(snapshot_id, worker_id)
+            cycle = await cycle_orchestrator.plan(helper.cycle_request)
+            results.append(SiteWorkerAgentResult(worker_id=worker_id, cycle=cycle))
+    except Exception as exc:
+        raise _provider_error(exc) from exc
+
+    generated_at = datetime.now(UTC)
+    get_store().add_audit(
+        snapshot_id,
+        "site_agent_plan_created",
+        {
+            "worker_ids": ordered,
+            "worker_count": len(results),
+            "cycle_ids": [item.cycle.cycle_id for item in results],
+        },
+    )
+    return SiteAgentPlanResponse(
+        snapshot_id=snapshot_id,
+        generated_at=generated_at,
+        worker_count=len(results),
+        results=results,
+        limitations=[
+            "Worker cycles refresh provider evidence independently and may differ from the earlier site snapshot.",
+            "Every proposed action remains human-gated and must be approved before it is recorded operationally.",
+        ],
+    )

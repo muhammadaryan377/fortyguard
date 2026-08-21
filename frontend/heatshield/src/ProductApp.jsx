@@ -16,6 +16,8 @@ import AppShell from "./product/mobile/AppShell.jsx";
 import TodayScreen from "./product/mobile/TodayScreen.jsx";
 import MapScreen from "./product/mobile/MapScreen.jsx";
 import PlanScreen from "./product/mobile/PlanScreen.jsx";
+import SiteSetupScreen from "./product/mobile/SiteSetupScreen.jsx";
+import CrewSetupScreen from "./product/mobile/CrewSetupScreen.jsx";
 import TeamScreen from "./product/mobile/TeamScreen.jsx";
 import AlertsScreen from "./product/mobile/AlertsScreen.jsx";
 import "./HeatShieldMobile.css";
@@ -205,12 +207,9 @@ export default function ProductApp() {
     const longitude = Number(location?.longitude);
     const timezone = String(location?.timezone ?? "").trim();
 
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !timezone) {
-      return undefined;
-    }
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !timezone) return undefined;
 
     let cancelled = false;
-
     const refreshWeather = async () => {
       try {
         const result = await fetchWeatherContext(location, { force: true });
@@ -219,14 +218,10 @@ export default function ProductApp() {
           setWeatherUpdatedAt(new Date().toISOString());
         }
       } catch {
-        // Preserve the last good live context on a background refresh failure.
+        // Preserve last good live context.
       }
     };
-
-    const timer = window.setInterval(() => {
-      void refreshWeather();
-    }, WEATHER_REFRESH_INTERVAL_MS);
-
+    const timer = window.setInterval(() => void refreshWeather(), WEATHER_REFRESH_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -238,12 +233,10 @@ export default function ProductApp() {
     { navigateOnUnsupported = false, showMessage = true } = {},
   ) => {
     const target = targetLocation || location;
-
     if (!target) {
       setError("HeatShield is still detecting your location.");
       return null;
     }
-
     if (!locationSupportsFortyGuard(target)) {
       if (navigateOnUnsupported) {
         setError("FortyGuard worksite heat intelligence is currently available for U.S. locations. General weather context is still shown for your selected location.");
@@ -251,21 +244,15 @@ export default function ProductApp() {
       }
       return null;
     }
-
     if (inFlight.current) return null;
+
     const replayMode = Boolean(target.analysis_datetime);
-    if (!replayMode) {
-      lastLiveAnalysisHourRef.current = siteHourKey(target);
-    }
+    if (!replayMode) lastLiveAnalysisHourRef.current = siteHourKey(target);
     inFlight.current = true;
     setAnalysisBusy(true);
     setError(null);
     if (showMessage) {
-      setMessage(
-        replayMode
-          ? "Loading verified FortyGuard Phoenix heat evidence…"
-          : "Loading current worksite heat evidence…",
-      );
+      setMessage(replayMode ? "Loading verified FortyGuard Phoenix heat evidence…" : "Loading current worksite heat evidence…");
     }
     setApproval(null);
     setVerification(null);
@@ -273,11 +260,7 @@ export default function ProductApp() {
     try {
       const [cycleResult, weatherResult] = await Promise.allSettled([
         fetchAgenticCycle(target, {
-          worker: {
-            worker_id: work.workerId || "WORKER-01",
-            acclimatized: work.acclimatized,
-            ppe_level: work.ppe,
-          },
+          worker: { worker_id: work.workerId || "WORKER-01", acclimatized: work.acclimatized, ppe_level: work.ppe },
           task: {
             task_id: "FIELD-TASK-01",
             task_name: work.taskName,
@@ -302,22 +285,8 @@ export default function ProductApp() {
 
       const result = cycleResult.value;
       setCycle(result);
-      setSelected(
-        (result.agent_decision?.actions ?? [])
-          .filter((action) => action.status === "proposed")
-          .map((action) => action.action_id),
-      );
-
-      if (showMessage) {
-        setMessage(
-          replayMode
-            ? "Verified FortyGuard Phoenix evidence and recommendations are ready."
-            : "Current FortyGuard heat evidence and worksite recommendations are ready.",
-        );
-      } else {
-        setMessage(null);
-      }
-
+      setSelected((result.agent_decision?.actions ?? []).filter((action) => action.status === "proposed").map((action) => action.action_id));
+      setMessage(showMessage ? (replayMode ? "Verified FortyGuard Phoenix evidence and recommendations are ready." : "Current FortyGuard heat evidence and worksite recommendations are ready.") : null);
       return result;
     } catch (analysisError) {
       setCycle(null);
@@ -331,54 +300,26 @@ export default function ProductApp() {
     }
   }, [location, work]);
 
-  const selectLocation = useCallback(async (
-    next,
-    { navigateTo = null, showMessage = true, autoAnalyze = true } = {},
-  ) => {
+  const selectLocation = useCallback(async (next, { navigateTo = null, showMessage = true, autoAnalyze = true } = {}) => {
     const normalized = applyLocation(next, { showMessage });
     if (navigateTo) setActiveTab(navigateTo);
-
-    if (autoAnalyze && normalized.fortyguard_supported) {
-      await runAnalysis(normalized, { showMessage });
-    }
-
+    if (autoAnalyze && normalized.fortyguard_supported) await runAnalysis(normalized, { showMessage });
     return normalized;
   }, [applyLocation, runAnalysis]);
 
-  const useCurrentLocation = useCallback(async (
-    { stayOnToday = false, showMessage = true } = {},
-  ) => {
+  const useCurrentLocation = useCallback(async ({ stayOnToday = false, showMessage = true } = {}) => {
     setLocationBusy(true);
     setError(null);
-
     try {
-      const position = await browserPosition({
-        timeout: 12_000,
-        maximumAge: 60_000,
-      });
-      const next = await reverseLocation(
-        position.coords.latitude,
-        position.coords.longitude,
-      );
-
-      const normalized = applyLocation({
-        ...next,
-        location_source: "browser_geolocation+reverse_geocoding",
-      }, { showMessage });
-
+      const position = await browserPosition({ timeout: 12_000, maximumAge: 60_000 });
+      const next = await reverseLocation(position.coords.latitude, position.coords.longitude);
+      const normalized = applyLocation({ ...next, location_source: "browser_geolocation+reverse_geocoding" }, { showMessage });
       setActiveTab(stayOnToday ? "today" : "map");
       setLocationBusy(false);
-
-      if (normalized.fortyguard_supported) {
-        await runAnalysis(normalized, { showMessage });
-      }
+      if (normalized.fortyguard_supported) await runAnalysis(normalized, { showMessage });
     } catch (locationError) {
       const denied = locationError?.code === 1;
-      setError(
-        denied
-          ? "Location permission was not granted. Allow location access, then use the location button or search for your worksite."
-          : locationError?.message ?? "Your current location could not be resolved.",
-      );
+      setError(denied ? "Location permission was not granted. Allow location access, then use the location button or search for your worksite." : locationError?.message ?? "Your current location could not be resolved.");
     } finally {
       setLocationBusy(false);
     }
@@ -391,40 +332,23 @@ export default function ProductApp() {
   }, [initialLocation, runAnalysis]);
 
   useEffect(() => {
-    if (
-      !location ||
-      location.analysis_datetime ||
-      !locationSupportsFortyGuard(location)
-    ) {
+    if (!location || location.analysis_datetime || !locationSupportsFortyGuard(location)) {
       lastLiveAnalysisHourRef.current = null;
       return undefined;
     }
-
-    if (!lastLiveAnalysisHourRef.current) {
-      lastLiveAnalysisHourRef.current = siteHourKey(location);
-    }
-
+    if (!lastLiveAnalysisHourRef.current) lastLiveAnalysisHourRef.current = siteHourKey(location);
     const timer = window.setInterval(() => {
       const currentHour = siteHourKey(location);
-      if (
-        !currentHour ||
-        currentHour === lastLiveAnalysisHourRef.current ||
-        inFlight.current
-      ) {
-        return;
-      }
-
+      if (!currentHour || currentHour === lastLiveAnalysisHourRef.current || inFlight.current) return;
       lastLiveAnalysisHourRef.current = currentHour;
       void runAnalysis(location, { showMessage: false });
     }, LIVE_ANALYSIS_CHECK_INTERVAL_MS);
-
     return () => window.clearInterval(timer);
   }, [location, runAnalysis]);
 
   async function findLocation() {
     setLocationBusy(true);
     setError(null);
-
     try {
       const coordinateMatch = query.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
       if (coordinateMatch) {
@@ -433,7 +357,6 @@ export default function ProductApp() {
         await selectLocation(next, { navigateTo: "today", autoAnalyze: true });
         return;
       }
-
       const result = await searchLocations(query);
       const items = result?.results ?? [];
       setSearchResults(items);
@@ -453,7 +376,6 @@ export default function ProductApp() {
   async function pickMap(latitude, longitude) {
     setLocationBusy(true);
     setError(null);
-
     try {
       const next = await reverseLocation(latitude, longitude);
       setLocationBusy(false);
@@ -473,13 +395,10 @@ export default function ProductApp() {
     if (!cycle?.cycle_id || !selected.length) return;
     setOperationBusy("approve");
     setError(null);
-
     try {
       const result = await approveCycleActions(cycle.cycle_id, selected, supervisor);
       setApproval(result);
-      const recordedCount = (result.results ?? []).filter((item) =>
-        ["executed", "already_executed"].includes(item.status),
-      ).length;
+      const recordedCount = (result.results ?? []).filter((item) => ["executed", "already_executed"].includes(item.status)).length;
       setMessage(
         recordedCount
           ? `${recordedCount} control${recordedCount === 1 ? "" : "s"} recorded for this cycle.`
@@ -497,7 +416,6 @@ export default function ProductApp() {
     if (!cycle?.cycle_id) return;
     setOperationBusy("verify");
     setError(null);
-
     try {
       const result = await verifyCycle(cycle.cycle_id);
       setVerification(result);
@@ -513,7 +431,6 @@ export default function ProductApp() {
     if (!cycle?.cycle_id) return;
     setOperationBusy("recheck");
     setError(null);
-
     try {
       const [successor, latestWeather] = await Promise.all([
         recheckCycle(cycle.cycle_id),
@@ -524,11 +441,7 @@ export default function ProductApp() {
         setWeather(latestWeather);
         setWeatherUpdatedAt(new Date().toISOString());
       }
-      setSelected(
-        (successor.agent_decision?.actions ?? [])
-          .filter((action) => action.status === "proposed")
-          .map((action) => action.action_id),
-      );
+      setSelected((successor.agent_decision?.actions ?? []).filter((action) => action.status === "proposed").map((action) => action.action_id));
       setApproval(null);
       setVerification(null);
       setMessage("Fresh heat evidence loaded and the plan was rebuilt.");
@@ -592,6 +505,8 @@ export default function ProductApp() {
           onPickMap={pickMap}
         />
       ) : null}
+      {activeTab === "site-setup" ? <SiteSetupScreen {...shared} /> : null}
+      {activeTab === "crew-setup" ? <CrewSetupScreen {...shared} /> : null}
       {activeTab === "plan" ? <PlanScreen {...shared} /> : null}
       {activeTab === "checkin" ? (
         <div className="hs-screen">

@@ -68,41 +68,23 @@ function formatLocalDateTime(location, now) {
   const timezone = location?.timezone || undefined;
   try {
     return {
-      time: new Intl.DateTimeFormat("en-US", {
-        timeZone: timezone,
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(now),
-      date: new Intl.DateTimeFormat("en-US", {
-        timeZone: timezone,
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-      }).format(now),
+      time: new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit" }).format(now),
+      date: new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", day: "numeric", month: "short" }).format(now),
     };
   } catch {
     return {
-      time: new Intl.DateTimeFormat("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(now),
-      date: new Intl.DateTimeFormat("en-US", {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-      }).format(now),
+      time: new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(now),
+      date: new Intl.DateTimeFormat("en-US", { weekday: "short", day: "numeric", month: "short" }).format(now),
     };
   }
 }
 
 function useLocationClock(location) {
   const [now, setNow] = useState(() => new Date());
-
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
-
   return formatLocalDateTime(location, now);
 }
 
@@ -120,11 +102,9 @@ export default function AppShell({
 }) {
   const clock = useLocationClock(location);
   const replayMode = Boolean(location?.analysis_datetime);
-  const rawLocationName =
-    location?.site_name ||
-    location?.name ||
-    location?.city ||
-    (locationBusy ? "Finding your location…" : "Select worksite");
+  const planningFlow = ["site-setup", "crew-setup", "plan"].includes(activeTab);
+  const navActiveTab = ["site-setup", "crew-setup"].includes(activeTab) ? "plan" : activeTab;
+  const rawLocationName = location?.site_name || location?.name || location?.city || (locationBusy ? "Finding your location…" : "Select worksite");
   const locationName = rawLocationName === "Phoenix Central City" ? "Phoenix Yard" : rawLocationName;
 
   return (
@@ -133,16 +113,9 @@ export default function AppShell({
         <header className="hs-header">
           <div className="hs-header-row">
             <Brand />
-            <button
-              className="hs-icon-button"
-              type="button"
-              aria-label="Open alerts"
-              onClick={() => onNavigate("alerts")}
-            >
+            <button className="hs-icon-button" type="button" aria-label="Open alerts" onClick={() => onNavigate("alerts")}>
               <Bell size={20} />
-              {cycle?.current_assessment?.screening?.band && cycle.current_assessment.screening.band !== "below_caution" ? (
-                <span className="hs-notification-dot" />
-              ) : null}
+              {cycle?.current_assessment?.screening?.band && cycle.current_assessment.screening.band !== "below_caution" ? <span className="hs-notification-dot" /> : null}
             </button>
           </div>
 
@@ -153,20 +126,18 @@ export default function AppShell({
             <ChevronDown size={16} />
           </button>
           <div className="hs-location-meta">
-            {locationBusy && !location
-              ? "Detecting current location…"
-              : `${replayMode ? "Live local time  •  " : ""}${clock.time}  •  ${clock.date}`}
+            {locationBusy && !location ? "Detecting current location…" : `${replayMode ? "Live local time  •  " : ""}${clock.time}  •  ${clock.date}`}
           </div>
         </header>
 
         <main className="hs-content">
-          {error ? (
+          {!planningFlow && error ? (
             <div className="hs-toast hs-toast-error">
               <span>{error}</span>
               <button type="button" onClick={onDismissError} aria-label="Dismiss error"><X size={16} /></button>
             </div>
           ) : null}
-          {message ? (
+          {!planningFlow && message ? (
             <div className="hs-toast hs-toast-success">
               <span>{message}</span>
               <button type="button" onClick={onDismissMessage} aria-label="Dismiss message"><X size={16} /></button>
@@ -177,12 +148,7 @@ export default function AppShell({
 
         <nav className="hs-bottom-nav" aria-label="HeatShield navigation">
           {TABS.map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              className={activeTab === id ? "active" : ""}
-              onClick={() => onNavigate(id)}
-            >
+            <button key={id} type="button" className={navActiveTab === id ? "active" : ""} onClick={() => onNavigate(id)}>
               <Icon size={21} />
               <span>{label}</span>
             </button>

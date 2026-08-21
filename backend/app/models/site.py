@@ -9,8 +9,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.fortyguard import EnvironmentalConditions
-from app.models.operations import HeatShieldCycleRequest
+from app.core.config import settings
+from app.models.fortyguard import EnvironmentalConditions, PolygonFeatureCollection
+from app.models.operations import CyclePlanResponse, HeatShieldCycleRequest
 from app.models.optimization import ShiftOptimizationResponse, ShiftTaskPlan, validate_task_dependencies
 from app.models.prediction import PredictHeatOutlookResponse
 from app.models.risk import RiskAssessment, TaskContext, USSiteLocation, WorkerContext, WorkloadLevel
@@ -31,9 +32,40 @@ class OperationalAttentionGroup(StrEnum):
     SCREENING_UNAVAILABLE = "screening_unavailable"
 
 
+class SiteWorkerPosition(StrictModel):
+    latitude: float = Field(ge=-90.0, le=90.0)
+    longitude: float = Field(ge=-180.0, le=180.0)
+    label: str | None = Field(default=None, max_length=120)
+
+
+def _point_in_ring(longitude: float, latitude: float, ring: list[list[float]]) -> bool:
+    inside = False
+    j = len(ring) - 1
+    for i, position in enumerate(ring):
+        previous = ring[j]
+        xi, yi = position[:2]
+        xj, yj = previous[:2]
+        intersects = (yi > latitude) != (yj > latitude) and longitude < (
+            (xj - xi) * (latitude - yi) / (yj - yi) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _point_in_collection(longitude: float, latitude: float, collection: PolygonFeatureCollection) -> bool:
+    return any(
+        feature.geometry.coordinates
+        and _point_in_ring(longitude, latitude, feature.geometry.coordinates[0])
+        for feature in collection.features
+    )
+
+
 class SiteWorkerAssignment(StrictModel):
     worker: WorkerContext
     task: TaskContext
+    position: SiteWorkerPosition | None = None
     shift_tasks: list[ShiftTaskPlan] | None = Field(default=None, min_length=1, max_length=6)
     display_label: str | None = Field(default=None, max_length=100)
 
@@ -47,6 +79,8 @@ class SiteWorkerAssignment(StrictModel):
 class SiteOperationsRequest(StrictModel):
     location: USSiteLocation
     timezone_name: str = "America/Phoenix"
+    site_polygon: PolygonFeatureCollection | None = None
+    analysis_datetime: datetime | None = None
     assignments: list[SiteWorkerAssignment] = Field(min_length=1, max_length=25)
     forecast_offset_hours: list[int] = Field(default_factory=lambda: [1, 3, 6, 9, 12], min_length=1, max_length=5)
     include_prediction: bool = True
@@ -54,6 +88,7 @@ class SiteOperationsRequest(StrictModel):
     spatial_search_radius_meters: int = Field(default=400, ge=100, le=1500)
     include_shift_optimization: bool = False
     max_spatial_candidates: int = Field(default=3, ge=1, le=5)
+    heatmap_granularity: Literal[60, 80, 100] = settings.heatshield_live_granularity_meters
 
     @field_validator("timezone_name")
     @classmethod
@@ -78,12 +113,27 @@ class SiteOperationsRequest(StrictModel):
             raise ValueError("worker_id values must be unique within a site request")
         if self.include_shift_optimization and not self.include_prediction:
             raise ValueError("include_shift_optimization=true requires include_prediction=true")
+
+        if self.site_polygon is not None:
+            if len(self.site_polygon.features) > 8:
+                raise ValueError("site_polygon supports at most 8 polygon features")
+            if not _point_in_collection(self.location.longitude, self.location.latitude, self.site_polygon):
+                raise ValueError("location must fall inside site_polygon")
+            for item in self.assignments:
+                if item.position is None:
+                    continue
+                if not _point_in_collection(item.position.longitude, item.position.latitude, self.site_polygon):
+                    raise ValueError(
+                        f"worker {item.worker.worker_id} position must fall inside site_polygon"
+                    )
         return self
 
 
 class SiteWorkerSnapshot(BaseModel):
     worker_id: str
     display_label: str | None = None
+    position: SiteWorkerPosition | None = None
+    zone_id: str | None = None
     task_id: str
     task_name: str
     workload_level: WorkloadLevel
@@ -101,6 +151,8 @@ class SiteWorkerSnapshot(BaseModel):
 
 class SiteOperationsSummary(BaseModel):
     worker_count: int
+    workers_with_precise_location_count: int = 0
+    site_polygon_feature_count: int = 0
     evidence_gap_count: int
     screening_band_counts: dict[str, int]
     direct_sun_worker_count: int
@@ -115,7 +167,9 @@ class SiteOperationsSummary(BaseModel):
 
 
 class SiteProviderUsage(BaseModel):
+    site_heatmap_requests: int = 0
     current_environment_fetches: int = 0
+    worker_environment_fetches: int = 0
     prediction_heatmap_requests: int = 0
     spatial_heatmap_requests: int = 0
     worker_assessment_count: int = 0
@@ -130,6 +184,9 @@ class SiteOperationsResponse(BaseModel):
     status: Literal["available", "partial", "insufficient_data"]
     location: USSiteLocation
     timezone_name: str
+    site_polygon: PolygonFeatureCollection | None = None
+    site_heatmap_activity_id: str | None = None
+    site_heatmap_granularity: Literal[60, 80, 100] | None = None
     shared_environment: EnvironmentalConditions
     heat_outlook: PredictHeatOutlookResponse | None = None
     spatial_heat: SpatialHeatResponse | None = None
@@ -144,4 +201,28 @@ class SelectedWorkerCycleRequest(BaseModel):
     snapshot_id: str
     worker_id: str
     cycle_request: HeatShieldCycleRequest
+    limitations: list[str]
+
+
+class SiteAgentPlanRequest(StrictModel):
+    worker_ids: list[str] = Field(min_length=1, max_length=10)
+
+    @field_validator("worker_ids")
+    @classmethod
+    def unique_workers(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("worker_ids must be unique")
+        return value
+
+
+class SiteWorkerAgentResult(BaseModel):
+    worker_id: str
+    cycle: CyclePlanResponse
+
+
+class SiteAgentPlanResponse(BaseModel):
+    snapshot_id: str
+    generated_at: datetime
+    worker_count: int
+    results: list[SiteWorkerAgentResult]
     limitations: list[str]
