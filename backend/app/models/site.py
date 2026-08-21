@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.core.config import settings
 from app.models.fortyguard import EnvironmentalConditions, PolygonFeatureCollection
-from app.models.operations import HeatShieldCycleRequest
+from app.models.operations import CyclePlanResponse, HeatShieldCycleRequest
 from app.models.optimization import ShiftOptimizationResponse, ShiftTaskPlan, validate_task_dependencies
 from app.models.prediction import PredictHeatOutlookResponse
 from app.models.risk import RiskAssessment, TaskContext, USSiteLocation, WorkerContext, WorkloadLevel
@@ -201,4 +201,28 @@ class SelectedWorkerCycleRequest(BaseModel):
     snapshot_id: str
     worker_id: str
     cycle_request: HeatShieldCycleRequest
+    limitations: list[str]
+
+
+class SiteAgentPlanRequest(StrictModel):
+    worker_ids: list[str] = Field(min_length=1, max_length=10)
+
+    @field_validator("worker_ids")
+    @classmethod
+    def unique_workers(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("worker_ids must be unique")
+        return value
+
+
+class SiteWorkerAgentResult(BaseModel):
+    worker_id: str
+    cycle: CyclePlanResponse
+
+
+class SiteAgentPlanResponse(BaseModel):
+    snapshot_id: str
+    generated_at: datetime
+    worker_count: int
+    results: list[SiteWorkerAgentResult]
     limitations: list[str]
