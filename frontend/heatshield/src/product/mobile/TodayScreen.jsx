@@ -48,6 +48,31 @@ function formatTime(value) {
   return `${hour12}${minute} ${period}`;
 }
 
+function formatEvidenceTimestamp(value, timezone) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone || undefined,
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
+}
+
 function riskTone(band, supported) {
   if (!supported) return "weather";
   if (["danger", "extreme_danger"].includes(band)) return "danger";
@@ -121,12 +146,16 @@ export default function TodayScreen({
   cycle,
   weather,
   weatherBusy,
+  heatmapState,
   analysisBusy,
   onAnalyze,
   onNavigate,
 }) {
   const locating = locationBusy && !location;
-  const replayMode = Boolean(cycle?.request?.analysis_datetime ?? location?.analysis_datetime);
+  const replayMode = Boolean(location?.analysis_datetime);
+  const evidenceTimestamp = replayMode
+    ? formatEvidenceTimestamp(location?.analysis_datetime, location?.timezone)
+    : null;
   const env = cycle?.current_assessment?.environmental_evidence ?? {};
   const screening = cycle?.current_assessment?.screening ?? {};
   const currentWeather = weather?.current ?? {};
@@ -169,6 +198,13 @@ export default function TodayScreen({
       )
     : null;
   const workWindow = lowerHeatWindow(weather);
+  const mappedTileCount = finite(heatmapState?.featureCount);
+  const spatialGranularity = finite(cycle?.spatial_heat?.granularity);
+  const verifiedSourceDetails = [
+    "FortyGuard verified replay",
+    mappedTileCount !== null ? `${Math.round(mappedTileCount)} mapped tiles` : null,
+    spatialGranularity !== null ? `${Math.round(spatialGranularity)} m grid` : null,
+  ].filter(Boolean).join(" · ");
 
   const handlePrimaryAction = () => {
     if (locating) return;
@@ -193,7 +229,7 @@ export default function TodayScreen({
     ? "Getting your location and current conditions…"
     : heatIndexF !== null
       ? replayMode
-        ? `Verified heat index: ${rounded(heatIndexF)}°F`
+        ? `Heat index: ${rounded(heatIndexF)}°F · verified`
         : `Heat index: ${rounded(heatIndexF)}°F`
       : analysisBusy
         ? replayMode
@@ -219,15 +255,24 @@ export default function TodayScreen({
     <div className="hs-screen hs-home-screen-v1">
       <section className={`hs-home-risk-card tone-${tone}`}>
         <div className="hs-home-risk-main">
-          <div className="hs-home-risk-kicker">
-            {locating || analysisBusy ? <LoaderCircle className="spinner" size={15} /> : tone === "danger" ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
-            <span>{kicker}</span>
+          <div className="hs-home-risk-heading-row">
+            <div className="hs-home-risk-kicker">
+              {locating || analysisBusy ? <LoaderCircle className="spinner" size={15} /> : tone === "danger" ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
+              <span>{kicker}</span>
+            </div>
+            {replayMode ? <span className="hs-home-evidence-pill">VERIFIED REPLAY</span> : null}
           </div>
+
+          {replayMode && evidenceTimestamp ? (
+            <div className="hs-home-evidence-time">FortyGuard evidence · {evidenceTimestamp}</div>
+          ) : null}
 
           <div className="hs-home-temp-row">
             <div className="hs-home-temp-copy">
               <strong>{rounded(airTempF)}<sup>°F</sup></strong>
-              <span>{replayMode && cycle ? "Verified feels like" : "Feels like"} {rounded(feelsLikeF)}°F</span>
+              <span>
+                Feels like {rounded(feelsLikeF)}°F{replayMode && cycle ? " · verified" : ""}
+              </span>
             </div>
             <div className="hs-home-thermometer" aria-hidden="true">
               <ThermometerSun size={35} />
@@ -242,6 +287,13 @@ export default function TodayScreen({
           <span>{guidance}</span>
         </div>
       </section>
+
+      {replayMode ? (
+        <div className="hs-home-section-label">
+          <span>LIVE WEATHER CONTEXT</span>
+          <small>Current {location?.city || "worksite"} conditions</small>
+        </div>
+      ) : null}
 
       <section className="hs-home-stat-row" aria-label={replayMode ? "Live weather context" : "Current conditions"}>
         <div>
@@ -264,7 +316,13 @@ export default function TodayScreen({
       <button className="hs-home-info-card hs-home-cooling" type="button" onClick={() => onNavigate("map")}>
         <span className="hs-home-info-icon"><Leaf size={23} /></span>
         <span className="hs-home-info-copy">
-          <small>{cooler ? "Nearest lower-heat area" : "Lower-heat area"}</small>
+          <small>
+            {replayMode
+              ? "Verified lower-heat area"
+              : cooler
+                ? "Nearest lower-heat area"
+                : "Lower-heat area"}
+          </small>
           <strong>
             {locating
               ? "Waiting for current location"
@@ -278,7 +336,9 @@ export default function TodayScreen({
                       : "Scan to compare nearby heat"
                   : "Available at supported U.S. worksites"}
           </strong>
-          {coolerTempF !== null ? <em>{rounded(coolerTempF)}°F candidate</em> : null}
+          {coolerTempF !== null ? (
+            <em>{rounded(coolerTempF)}°F {replayMode ? "verified tile" : "candidate"}</em>
+          ) : null}
         </span>
         <span className="hs-home-card-link">View on Map <ArrowRight size={14} /></span>
       </button>
@@ -286,10 +346,10 @@ export default function TodayScreen({
       <button className="hs-home-info-card hs-home-window" type="button" onClick={() => onNavigate("plan")}>
         <span className="hs-home-info-icon"><Clock3 size={23} /></span>
         <span className="hs-home-info-copy">
-          <small>Lower-heat work window today</small>
+          <small>{replayMode ? "Live lower-heat work window" : "Lower-heat work window today"}</small>
           <strong>{locating || weatherBusy ? "Loading current forecast…" : workWindow?.label ?? "Forecast window unavailable"}</strong>
           {workWindow?.tempF !== null && workWindow?.tempF !== undefined ? (
-            <em>Feels like about {rounded(workWindow.tempF)}°F</em>
+            <em>{replayMode ? "Live forecast · " : ""}Feels like about {rounded(workWindow.tempF)}°F</em>
           ) : null}
         </span>
         <ArrowRight className="hs-home-end-arrow" size={18} />
@@ -322,9 +382,12 @@ export default function TodayScreen({
       </button>
 
       <p className="hs-home-source-note">
-        <MapPin size={13} /> {replayMode
-          ? "Heat risk uses verified FortyGuard Phoenix evidence from Jul 15, 2024 at 2 PM; live weather powers the context cards."
-          : "FortyGuard is the primary heat-risk evidence source; weather context supplements the selected location."}
+        <MapPin size={13} />
+        <span>
+          {replayMode
+            ? `${verifiedSourceDetails}. Live weather and forecast cards are context only.`
+            : "FortyGuard is the primary heat-risk evidence source; weather context supplements the selected location."}
+        </span>
       </p>
     </div>
   );
