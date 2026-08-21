@@ -91,8 +91,7 @@ function readSavedSetup() {
   }
 }
 
-function createWorker(index, fallbackZone = "north_side") {
-  const number = index + 1;
+function createWorker(number, fallbackZone = "north_side") {
   return {
     workerId: `WORKER-${String(number).padStart(2, "0")}`,
     name: `Worker ${String(number).padStart(2, "0")}`,
@@ -106,6 +105,13 @@ function createWorker(index, fallbackZone = "north_side") {
     acclimatized: true,
     reassignAllowed: true,
   };
+}
+
+function nextWorkerNumber(crew) {
+  const used = new Set(crew.map((worker) => worker.workerId));
+  let number = 1;
+  while (used.has(`WORKER-${String(number).padStart(2, "0")}`)) number += 1;
+  return number;
 }
 
 function WorkerCard({ worker, index, canRemove, onChange, onRemove }) {
@@ -122,6 +128,7 @@ function WorkerCard({ worker, index, canRemove, onChange, onRemove }) {
             aria-label={`Worker ${index + 1} display name`}
             onChange={(event) => set("name", event.target.value)}
           />
+          <span className="hs-crew-worker-id">{worker.workerId}</span>
           <select
             className="hs-crew-zone-select"
             value={worker.zone}
@@ -280,7 +287,7 @@ export default function PlanScreen({
     setConfirmed(false);
     setCrew((current) => [
       ...current,
-      createWorker(current.length, selectedZone || "north_side"),
+      createWorker(nextWorkerNumber(current), selectedZone || "north_side"),
     ]);
   }
 
@@ -412,7 +419,7 @@ export default function PlanScreen({
         <div className="hs-crew-roster">
           {crew.map((worker, index) => (
             <WorkerCard
-              key={`${worker.workerId}-${index}`}
+              key={worker.workerId}
               worker={worker}
               index={index}
               canRemove={crew.length > 1}
