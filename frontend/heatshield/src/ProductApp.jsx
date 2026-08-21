@@ -39,6 +39,9 @@ const DEFAULT_DEMO_LOCATION = {
   fortyguard_supported: true,
 };
 
+const WEATHER_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+const LIVE_ANALYSIS_CHECK_INTERVAL_MS = 60 * 1000;
+
 function browserPosition(options = {}) {
   return new Promise((resolve, reject) => {
     if (!window.navigator?.geolocation) {
@@ -72,9 +75,35 @@ function normalizeLocation(next) {
   };
 }
 
+function siteHourKey(location, now = new Date()) {
+  const timezone = String(location?.timezone ?? "").trim();
+  if (!timezone) return null;
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = Object.fromEntries(
+      formatter
+        .formatToParts(now)
+        .filter((part) => part.type !== "literal")
+        .map((part) => [part.type, part.value]),
+    );
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}`;
+  } catch {
+    return null;
+  }
+}
+
 export default function ProductApp() {
   const inFlight = useRef(false);
   const initialLocationStarted = useRef(false);
+  const lastLiveAnalysisHourRef = useRef(null);
   const initialLocation = useMemo(() => normalizeLocation(DEFAULT_DEMO_LOCATION), []);
   const [activeTab, setActiveTab] = useState("today");
   const [location, setLocation] = useState(initialLocation);
@@ -84,6 +113,7 @@ export default function ProductApp() {
   const [cycle, setCycle] = useState(null);
   const [weather, setWeather] = useState(null);
   const [weatherBusy, setWeatherBusy] = useState(false);
+  const [weatherUpdatedAt, setWeatherUpdatedAt] = useState(null);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [operationBusy, setOperationBusy] = useState(null);
   const [message, setMessage] = useState(null);
@@ -110,9 +140,11 @@ export default function ProductApp() {
   const applyLocation = useCallback((next, { showMessage = true } = {}) => {
     const normalized = normalizeLocation(next);
     const replayMode = Boolean(normalized.analysis_datetime);
+    lastLiveAnalysisHourRef.current = null;
     setLocation(normalized);
     setQuery(normalized.display_name || normalized.name || "");
     setSearchResults([]);
+    setWeatherUpdatedAt(null);
     resetCycleState();
     setError(null);
 
@@ -138,6 +170,7 @@ export default function ProductApp() {
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !timezone) {
       setWeather(null);
+      setWeatherUpdatedAt(null);
       setWeatherBusy(false);
       return undefined;
     }
@@ -147,10 +180,16 @@ export default function ProductApp() {
 
     fetchWeatherContext(location)
       .then((result) => {
-        if (!cancelled) setWeather(result);
+        if (!cancelled) {
+          setWeather(result);
+          setWeatherUpdatedAt(new Date().toISOString());
+        }
       })
       .catch(() => {
-        if (!cancelled) setWeather(null);
+        if (!cancelled) {
+          setWeather(null);
+          setWeatherUpdatedAt(null);
+        }
       })
       .finally(() => {
         if (!cancelled) setWeatherBusy(false);
@@ -158,6 +197,39 @@ export default function ProductApp() {
 
     return () => {
       cancelled = true;
+    };
+  }, [location?.latitude, location?.longitude, location?.timezone]);
+
+  useEffect(() => {
+    const latitude = Number(location?.latitude);
+    const longitude = Number(location?.longitude);
+    const timezone = String(location?.timezone ?? "").trim();
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !timezone) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const refreshWeather = async () => {
+      try {
+        const result = await fetchWeatherContext(location, { force: true });
+        if (!cancelled) {
+          setWeather(result);
+          setWeatherUpdatedAt(new Date().toISOString());
+        }
+      } catch {
+        // Preserve the last good live context on a background refresh failure.
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      void refreshWeather();
+    }, WEATHER_REFRESH_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
   }, [location?.latitude, location?.longitude, location?.timezone]);
 
@@ -182,6 +254,9 @@ export default function ProductApp() {
 
     if (inFlight.current) return null;
     const replayMode = Boolean(target.analysis_datetime);
+    if (!replayMode) {
+      lastLiveAnalysisHourRef.current = siteHourKey(target);
+    }
     inFlight.current = true;
     setAnalysisBusy(true);
     setError(null);
@@ -219,7 +294,10 @@ export default function ProductApp() {
         fetchWeatherContext(target, { force: true }),
       ]);
 
-      if (weatherResult.status === "fulfilled") setWeather(weatherResult.value);
+      if (weatherResult.status === "fulfilled") {
+        setWeather(weatherResult.value);
+        setWeatherUpdatedAt(new Date().toISOString());
+      }
       if (cycleResult.status === "rejected") throw cycleResult.reason;
 
       const result = cycleResult.value;
@@ -311,6 +389,37 @@ export default function ProductApp() {
     initialLocationStarted.current = true;
     void runAnalysis(initialLocation, { showMessage: false });
   }, [initialLocation, runAnalysis]);
+
+  useEffect(() => {
+    if (
+      !location ||
+      location.analysis_datetime ||
+      !locationSupportsFortyGuard(location)
+    ) {
+      lastLiveAnalysisHourRef.current = null;
+      return undefined;
+    }
+
+    if (!lastLiveAnalysisHourRef.current) {
+      lastLiveAnalysisHourRef.current = siteHourKey(location);
+    }
+
+    const timer = window.setInterval(() => {
+      const currentHour = siteHourKey(location);
+      if (
+        !currentHour ||
+        currentHour === lastLiveAnalysisHourRef.current ||
+        inFlight.current
+      ) {
+        return;
+      }
+
+      lastLiveAnalysisHourRef.current = currentHour;
+      void runAnalysis(location, { showMessage: false });
+    }, LIVE_ANALYSIS_CHECK_INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
+  }, [location, runAnalysis]);
 
   async function findLocation() {
     setLocationBusy(true);
@@ -411,7 +520,10 @@ export default function ProductApp() {
         fetchWeatherContext(location, { force: true }).catch(() => null),
       ]);
       setCycle(successor);
-      if (latestWeather) setWeather(latestWeather);
+      if (latestWeather) {
+        setWeather(latestWeather);
+        setWeatherUpdatedAt(new Date().toISOString());
+      }
       setSelected(
         (successor.agent_decision?.actions ?? [])
           .filter((action) => action.status === "proposed")
@@ -435,6 +547,7 @@ export default function ProductApp() {
     cycle,
     weather,
     weatherBusy,
+    weatherUpdatedAt,
     heatmapState,
     work,
     setWork,

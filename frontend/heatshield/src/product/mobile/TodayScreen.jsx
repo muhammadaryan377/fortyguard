@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -73,6 +74,20 @@ function formatEvidenceTimestamp(value, timezone) {
   }
 }
 
+function weatherFreshnessLabel(value, nowMs, busy) {
+  if (!value) {
+    return busy ? "Updating… · auto 10m" : "Waiting for update · auto 10m";
+  }
+
+  const updatedMs = Date.parse(value);
+  if (!Number.isFinite(updatedMs)) return "Auto-refresh every 10m";
+
+  const minutes = Math.max(0, Math.floor((nowMs - updatedMs) / 60_000));
+  if (minutes < 1) return "Updated just now · auto 10m";
+  if (minutes === 1) return "Updated 1 min ago · auto 10m";
+  return `Updated ${minutes} min ago · auto 10m`;
+}
+
 function riskTone(band, supported) {
   if (!supported) return "weather";
   if (["danger", "extreme_danger"].includes(band)) return "danger";
@@ -146,16 +161,29 @@ export default function TodayScreen({
   cycle,
   weather,
   weatherBusy,
+  weatherUpdatedAt,
   heatmapState,
   analysisBusy,
   onAnalyze,
   onNavigate,
 }) {
+  const [relativeNow, setRelativeNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setRelativeNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const locating = locationBusy && !location;
   const replayMode = Boolean(location?.analysis_datetime);
   const evidenceTimestamp = replayMode
     ? formatEvidenceTimestamp(location?.analysis_datetime, location?.timezone)
     : null;
+  const weatherFreshness = weatherFreshnessLabel(
+    weatherUpdatedAt,
+    relativeNow,
+    weatherBusy,
+  );
   const env = cycle?.current_assessment?.environmental_evidence ?? {};
   const screening = cycle?.current_assessment?.screening ?? {};
   const currentWeather = weather?.current ?? {};
@@ -288,12 +316,10 @@ export default function TodayScreen({
         </div>
       </section>
 
-      {replayMode ? (
-        <div className="hs-home-section-label">
-          <span>LIVE WEATHER CONTEXT</span>
-          <small>Current {location?.city || "worksite"} conditions</small>
-        </div>
-      ) : null}
+      <div className="hs-home-section-label">
+        <span>{replayMode ? "LIVE WEATHER CONTEXT" : "LIVE CONDITIONS"}</span>
+        <small>{weatherFreshness}</small>
+      </div>
 
       <section className="hs-home-stat-row" aria-label={replayMode ? "Live weather context" : "Current conditions"}>
         <div>
@@ -385,8 +411,8 @@ export default function TodayScreen({
         <MapPin size={13} />
         <span>
           {replayMode
-            ? `${verifiedSourceDetails}. Live weather and forecast cards are context only.`
-            : "FortyGuard is the primary heat-risk evidence source; weather context supplements the selected location."}
+            ? `${verifiedSourceDetails}. Replay stays fixed; live weather refreshes every 10 min.`
+            : "FortyGuard is the primary heat-risk evidence source. Live weather refreshes every 10 min; current FortyGuard evidence refreshes on the hour."}
         </span>
       </p>
     </div>
