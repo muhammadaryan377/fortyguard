@@ -144,7 +144,8 @@ export default function TodayScreen({
   );
 
   const cooler = cycle?.spatial_heat?.candidates?.[0] ?? null;
-  const coolerMiles = cooler ? finite(cooler.straight_line_distance_m) / 1609.344 : null;
+  const coolerDistanceM = cooler ? finite(cooler.straight_line_distance_m) : null;
+  const coolerMiles = coolerDistanceM === null ? null : coolerDistanceM / 1609.344;
   const coolerTempF = cooler
     ? cToF(
         cooler.temperature_c ??
