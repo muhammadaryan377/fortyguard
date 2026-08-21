@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     heatshield_site_polygon_radius_meters: float = 300.0
     heatshield_live_granularity_meters: Literal[60, 80, 100] = 60
     heatshield_timestamp_tolerance_minutes: int = 5
+    # Comma-separated frontend origins allowed to call this API in browsers.
+    heatshield_cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     heatshield_agent_model: str = "deepseek-v4-flash"

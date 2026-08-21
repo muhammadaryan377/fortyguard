@@ -1,3 +1,5 @@
+import { apiUrl } from "./apiBase.js";
+
 const WEATHER_CACHE_MS = 5 * 60_000;
 const weatherCache = new Map();
 
@@ -24,7 +26,7 @@ export async function fetchWeatherContext(location, options = {}) {
       longitude: String(lon),
       timezone_name: timezone,
     });
-    const response = await fetch(`/api/weather/context?${params.toString()}`, {
+    const response = await fetch(apiUrl(`/api/weather/context?${params.toString()}`), {
       headers: { Accept: "application/json" },
       signal: controller.signal,
     });

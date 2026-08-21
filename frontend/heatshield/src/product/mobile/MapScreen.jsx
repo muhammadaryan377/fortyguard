@@ -41,6 +41,9 @@ export default function MapScreen({
   onAnalyze,
   onNavigate,
 }) {
+  const latitude = finite(location?.latitude);
+  const longitude = finite(location?.longitude);
+  const hasLocation = latitude !== null && longitude !== null;
   const env = cycle?.current_assessment?.environmental_evidence;
   const screening = cycle?.current_assessment?.screening;
   const candidates = cycle?.spatial_heat?.candidates ?? [];
@@ -90,77 +93,89 @@ export default function MapScreen({
         </div>
       ) : null}
 
-      <div className={`hs-coverage-strip ${fortyGuardSupported ? "supported" : "weather-only"}`}>
-        {fortyGuardSupported ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
-        <div>
-          <strong>{fortyGuardSupported ? "FortyGuard heat intelligence available" : "Weather context only at this location"}</strong>
-          <span>{fortyGuardSupported ? "Scan this exact point to load provider-backed worksite heat cells, nearby lower-heat candidates, and the operational plan." : "You can still view general weather here. Select a U.S. worksite to unlock FortyGuard occupational heat intelligence."}</span>
+      {!hasLocation ? (
+        <div className="hs-coverage-strip weather-only">
+          {searching ? <LoaderCircle className="spinner" size={20} /> : <MapPinned size={20} />}
+          <div>
+            <strong>{searching ? "Finding your worksite" : "Select a worksite to open the map"}</strong>
+            <span>Allow current-location access or search for a city, address, landmark, or coordinates. HeatShield will load the map only after valid coordinates are available.</span>
+          </div>
         </div>
-      </div>
-
-      <SelectableHeatMap
-        location={location}
-        fortyGuardSupported={fortyGuardSupported}
-        heatmapState={heatmapState}
-        spatialCandidates={candidates}
-        onPick={onPickMap}
-        picking={searching}
-      />
-
-      <section className="hs-map-summary-grid hs-map-intelligence-grid">
-        <article className="hs-map-summary hs-map-weather">
-          <span className="hs-summary-icon"><CloudSun size={22} /></span>
-          <div>
-            <span>Selected location</span>
-            <strong>{rounded(weatherTempF)}°F air</strong>
-            <small>{locationLabel || `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`} · Open-Meteo context</small>
-          </div>
-        </article>
-
-        <article className={`hs-map-summary ${fortyGuardSupported ? "hs-map-current" : "hs-map-unavailable"}`}>
-          <span className="hs-summary-icon"><ThermometerSun size={22} /></span>
-          <div>
-            <span>FortyGuard worksite heat</span>
-            <strong>
-              {!fortyGuardSupported
-                ? "Not available here"
-                : finite(env?.temperature_c) === null
-                  ? "Ready to scan"
-                  : `${metric(env.temperature_c)}°C`}
-            </strong>
-            <small>
-              {!fortyGuardSupported
-                ? "Current FortyGuard product coverage is limited to supported U.S. locations."
-                : cycle
-                  ? `${BAND_LABEL[screening?.band] ?? "Screening unavailable"} · Heat Index ${metric(env?.heat_index_c)}°C`
-                  : "Run the worksite scan for provider-backed heat evidence."}
-            </small>
-          </div>
-        </article>
-
-        {fortyGuardSupported ? (
-          <article className="hs-map-summary hs-map-cooler hs-map-candidate-card">
-            <span className="hs-summary-icon"><MapPinned size={22} /></span>
+      ) : (
+        <>
+          <div className={`hs-coverage-strip ${fortyGuardSupported ? "supported" : "weather-only"}`}>
+            {fortyGuardSupported ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
             <div>
-              <span>Best lower-heat mapped candidate</span>
-              <strong>{cooler ? `${metric(cooler.temperature_c)}°C` : "Not checked yet"}</strong>
-              <small>{cooler ? `${metric(cooler.cooler_by_c)}°C lower than the selected tile · ${Math.round(cooler.straight_line_distance_m)} m straight-line. This is comparative heat evidence, not a safety determination.` : "Scan the worksite to compare nearby FortyGuard tiles."}</small>
+              <strong>{fortyGuardSupported ? "FortyGuard heat intelligence available" : "Weather context only at this location"}</strong>
+              <span>{fortyGuardSupported ? "Scan this exact point to load provider-backed worksite heat cells, nearby lower-heat candidates, and the operational plan." : "You can still view general weather here. Select a U.S. worksite to unlock FortyGuard occupational heat intelligence."}</span>
             </div>
-          </article>
-        ) : null}
-      </section>
+          </div>
 
-      {fortyGuardSupported && !cycle ? (
-        <button className="hs-primary-cta hs-map-scan-cta" type="button" onClick={onAnalyze} disabled={analysisBusy}>
-          {analysisBusy ? <LoaderCircle className="spinner" size={19} /> : <Zap size={19} />}
-          <span><strong>{analysisBusy ? "Scanning this worksite…" : "Scan this worksite with FortyGuard"}</strong><small>Load hyperlocal heat, nearby comparison tiles, and the operational recommendation</small></span>
-          <ArrowRight size={18} />
-        </button>
-      ) : null}
+          <SelectableHeatMap
+            location={location}
+            fortyGuardSupported={fortyGuardSupported}
+            heatmapState={heatmapState}
+            spatialCandidates={candidates}
+            onPick={onPickMap}
+            picking={searching}
+          />
 
-      {fortyGuardSupported && cycle ? (
-        <button className="hs-soft-action" type="button" onClick={() => onNavigate("plan")}><SunMedium size={17} /> Review the work recommendation <ArrowRight size={16} /></button>
-      ) : null}
+          <section className="hs-map-summary-grid hs-map-intelligence-grid">
+            <article className="hs-map-summary hs-map-weather">
+              <span className="hs-summary-icon"><CloudSun size={22} /></span>
+              <div>
+                <span>Selected location</span>
+                <strong>{rounded(weatherTempF)}°F air</strong>
+                <small>{locationLabel || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`} · Open-Meteo context</small>
+              </div>
+            </article>
+
+            <article className={`hs-map-summary ${fortyGuardSupported ? "hs-map-current" : "hs-map-unavailable"}`}>
+              <span className="hs-summary-icon"><ThermometerSun size={22} /></span>
+              <div>
+                <span>FortyGuard worksite heat</span>
+                <strong>
+                  {!fortyGuardSupported
+                    ? "Not available here"
+                    : finite(env?.temperature_c) === null
+                      ? "Ready to scan"
+                      : `${metric(env.temperature_c)}°C`}
+                </strong>
+                <small>
+                  {!fortyGuardSupported
+                    ? "Current FortyGuard product coverage is limited to supported U.S. locations."
+                    : cycle
+                      ? `${BAND_LABEL[screening?.band] ?? "Screening unavailable"} · Heat Index ${metric(env?.heat_index_c)}°C`
+                      : "Run the worksite scan for provider-backed heat evidence."}
+                </small>
+              </div>
+            </article>
+
+            {fortyGuardSupported ? (
+              <article className="hs-map-summary hs-map-cooler hs-map-candidate-card">
+                <span className="hs-summary-icon"><MapPinned size={22} /></span>
+                <div>
+                  <span>Best lower-heat mapped candidate</span>
+                  <strong>{cooler ? `${metric(cooler.temperature_c)}°C` : "Not checked yet"}</strong>
+                  <small>{cooler ? `${metric(cooler.cooler_by_c)}°C lower than the selected tile · ${Math.round(cooler.straight_line_distance_m)} m straight-line. This is comparative heat evidence, not a safety determination.` : "Scan the worksite to compare nearby FortyGuard tiles."}</small>
+                </div>
+              </article>
+            ) : null}
+          </section>
+
+          {fortyGuardSupported && !cycle ? (
+            <button className="hs-primary-cta hs-map-scan-cta" type="button" onClick={onAnalyze} disabled={analysisBusy}>
+              {analysisBusy ? <LoaderCircle className="spinner" size={19} /> : <Zap size={19} />}
+              <span><strong>{analysisBusy ? "Scanning this worksite…" : "Scan this worksite with FortyGuard"}</strong><small>Load hyperlocal heat, nearby comparison tiles, and the operational recommendation</small></span>
+              <ArrowRight size={18} />
+            </button>
+          ) : null}
+
+          {fortyGuardSupported && cycle ? (
+            <button className="hs-soft-action" type="button" onClick={() => onNavigate("plan")}><SunMedium size={17} /> Review the work recommendation <ArrowRight size={16} /></button>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

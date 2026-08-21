@@ -1,3 +1,5 @@
+import { apiUrl } from "./apiBase.js";
+
 const DEFAULT_TIMEOUT_MS = 180_000;
 const AGENT_TIMEOUT_MS = 300_000;
 
@@ -20,7 +22,7 @@ async function request(path, { method = "GET", payload, timeoutMs = DEFAULT_TIME
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(path, {
+    const response = await fetch(apiUrl(path), {
       method,
       headers: {
         Accept: "application/json",
