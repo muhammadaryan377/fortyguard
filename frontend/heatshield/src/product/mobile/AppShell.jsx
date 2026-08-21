@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BatteryFull,
   Bell,
@@ -67,9 +67,8 @@ function Brand() {
   );
 }
 
-function formatLocalDateTime(location) {
+function formatLocalDateTime(location, now) {
   const timezone = location?.timezone || undefined;
-  const now = new Date();
   try {
     return {
       time: new Intl.DateTimeFormat("en-US", {
@@ -100,16 +99,13 @@ function formatLocalDateTime(location) {
 }
 
 function useLocationClock(location) {
-  const [tick, setTick] = useState(0);
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const timer = window.setInterval(() => setTick((value) => value + 1), 30_000);
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  return useMemo(
-    () => formatLocalDateTime(location),
-    [location?.timezone, tick],
-  );
+  return formatLocalDateTime(location, now);
 }
 
 export default function AppShell({
