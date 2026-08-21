@@ -19,6 +19,7 @@ from app.models.spatial import (
 )
 from app.services.fortyguard import FortyGuardClient, fortyguard_client, normalize_heatmap_result
 from app.services.live_environment import _point_in_ring, build_site_polygon
+from app.services.spatial_context import operational_polygon_context
 
 SPATIAL_LIMITATIONS = [
     "Cooler means lower temperature in the returned sampled spatial tiles; it does not mean safe.",
@@ -79,8 +80,6 @@ def _valid_tile(
     ):
         return None
     properties, geometry = feature["properties"], feature["geometry"]
-    # TCM tiles use an explicit Celsius temperature field. Generic `value` is
-    # reserved for analysis heatmaps and min/max are not representative values.
     field_name = "average_temperature" if "average_temperature" in properties else "temperature"
     value = properties.get(field_name)
     if (
@@ -238,6 +237,10 @@ async def create_spatial_heat(
     client: FortyGuardClient = fortyguard_client,
     clock: Callable[[], datetime] | None = None,
 ) -> SpatialHeatResponse:
+    context_polygon = operational_polygon_context.get()
+    if request.operational_polygon is None and context_polygon is not None:
+        request = request.model_copy(update={"operational_polygon": context_polygon})
+
     now = (clock or (lambda: datetime.now(UTC)))()
     generated = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
     local = generated.astimezone(ZoneInfo(request.timezone_name))
