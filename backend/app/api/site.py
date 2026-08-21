@@ -1,5 +1,6 @@
 """Supervisor-ready multi-worker site snapshot endpoints."""
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, HTTPException
@@ -19,6 +20,11 @@ from app.services.site_operations import SiteOperationsOrchestrator
 from app.services.spatial_context import operational_polygon_context
 
 router = APIRouter(prefix="/site", tags=["Multi-worker site intelligence"])
+
+# Each worker cycle already fans out independent provider forecast jobs. Keeping
+# this small gives the UI a substantial latency reduction without creating an
+# unbounded provider burst when a supervisor plans a larger crew.
+AGENT_PLAN_WORKER_CONCURRENCY = 2
 
 PHOENIX_EXAMPLE = {
     "location": {"site_id": "PHX-01", "name": "Phoenix Operations Site", "city": "Phoenix",
@@ -78,11 +84,12 @@ async def selected_worker_cycle_request(snapshot_id: str, worker_id: str) -> Sel
 
 @router.post("/operations-snapshot/{snapshot_id}/agent-plan", response_model=SiteAgentPlanResponse)
 async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest) -> SiteAgentPlanResponse:
-    """Run bounded worker cycles in deterministic attention order.
+    """Run bounded worker cycles concurrently while preserving attention order.
 
-    The site snapshot remains the shared supervisor view. Each selected worker
-    cycle deliberately refreshes provider evidence at that worker's submitted
-    coordinates before DeepSeek is allowed to select from server-defined tools.
+    Each selected worker still refreshes provider evidence at the submitted
+    coordinate before DeepSeek may select a server-defined tool. Concurrency is
+    intentionally bounded because a single worker cycle already creates several
+    independent provider jobs.
     """
 
     site_orchestrator = get_site_orchestrator()
@@ -99,22 +106,31 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
     requested = set(payload.worker_ids)
     ordered = [worker_id for worker_id in snapshot.attention_queue if worker_id in requested]
     cycle_orchestrator = CycleOrchestrator(get_store())
-    results: list[SiteWorkerAgentResult] = []
+    semaphore = asyncio.Semaphore(AGENT_PLAN_WORKER_CONCURRENCY)
 
-    try:
-        for worker_id in ordered:
-            helper = site_orchestrator.cycle_request(snapshot_id, worker_id)
-            cycle_request = helper.cycle_request
-            if cycle_request.include_spatial_intelligence and snapshot.site_polygon is not None:
-                cycle_request = cycle_request.model_copy(
-                    update={"operational_polygon": snapshot.site_polygon}
-                )
+    async def run_worker(index: int, worker_id: str) -> tuple[int, SiteWorkerAgentResult]:
+        helper = site_orchestrator.cycle_request(snapshot_id, worker_id)
+        cycle_request = helper.cycle_request
+        if cycle_request.include_spatial_intelligence and snapshot.site_polygon is not None:
+            cycle_request = cycle_request.model_copy(
+                update={"operational_polygon": snapshot.site_polygon}
+            )
+
+        async with semaphore:
             token = operational_polygon_context.set(cycle_request.operational_polygon)
             try:
                 cycle = await cycle_orchestrator.plan(cycle_request)
             finally:
                 operational_polygon_context.reset(token)
-            results.append(SiteWorkerAgentResult(worker_id=worker_id, cycle=cycle))
+        return index, SiteWorkerAgentResult(worker_id=worker_id, cycle=cycle)
+
+    try:
+        completed = await asyncio.gather(
+            *(run_worker(index, worker_id) for index, worker_id in enumerate(ordered))
+        )
+        # asyncio.gather preserves input order, but sort explicitly so this remains
+        # deterministic even if the implementation later changes to as_completed.
+        results = [item for _, item in sorted(completed, key=lambda pair: pair[0])]
     except Exception as exc:
         raise _provider_error(exc) from exc
 
@@ -127,6 +143,7 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
             "worker_count": len(results),
             "cycle_ids": [item.cycle.cycle_id for item in results],
             "site_boundary_applied_to_spatial_cycles": snapshot.site_polygon is not None,
+            "worker_cycle_concurrency": AGENT_PLAN_WORKER_CONCURRENCY,
         },
     )
     return SiteAgentPlanResponse(
@@ -136,6 +153,7 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
         results=results,
         limitations=[
             "Worker cycles refresh provider evidence independently and may differ from the earlier site snapshot.",
+            "Worker cycles use bounded concurrency; result order still follows the deterministic attention queue.",
             "Spatial relocation candidates are eligible only when verified inside the submitted operational polygon.",
             "Every proposed action remains human-gated and must be approved before it is recorded operationally.",
         ],
