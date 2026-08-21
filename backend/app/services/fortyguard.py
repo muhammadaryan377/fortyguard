@@ -54,6 +54,8 @@ class FortyGuardClient:
         self.base_url = (base_url or settings.fortyguard_base_url).rstrip("/")
         self.timeout = timeout or settings.fortyguard_timeout_seconds
         self._client = client
+        self._owns_client = client is None
+        self._client_lock = asyncio.Lock()
 
     @property
     def headers(self) -> dict[str, str]:
@@ -61,9 +63,35 @@ class FortyGuardClient:
             raise FortyGuardConfigurationError("FortyGuard API key is not configured")
         return {"api-key": self.api_key, "Content-Type": "application/json"}
 
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Return one pooled client for the application lifetime.
+
+        FortyGuard jobs require repeated submit/status calls. Reusing one
+        AsyncClient avoids opening a fresh TCP/TLS connection for every poll.
+        Injected test clients are preserved exactly as supplied.
+        """
+        if self._client is not None:
+            return self._client
+        async with self._client_lock:
+            if self._client is None:
+                self._client = httpx.AsyncClient(
+                    timeout=self.timeout,
+                    limits=httpx.Limits(
+                        max_connections=40,
+                        max_keepalive_connections=20,
+                        keepalive_expiry=30.0,
+                    ),
+                )
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the internally-owned pooled HTTP client."""
+        if self._owns_client and self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=self.timeout)
+        client = await self._get_client()
         try:
             response = await client.request(
                 method, f"{self.base_url}{path}", headers=self.headers, **kwargs
@@ -84,9 +112,6 @@ class FortyGuardClient:
             ) from exc
         except httpx.RequestError as exc:
             raise FortyGuardAPIError("Unable to reach FortyGuard") from exc
-        finally:
-            if owns_client:
-                await client.aclose()
 
     async def submit_job(self, endpoint: str, payload: dict[str, Any]) -> str:
         started = monotonic()
