@@ -24,9 +24,10 @@ function MapViewport({ site }) {
   return null;
 }
 
-function MapClickHandler({ onClick }) {
+function MapClickHandler({ enabled, onClick }) {
   useMapEvents({
     click(event) {
+      if (!enabled) return;
       onClick?.({ latitude: event.latlng.lat, longitude: event.latlng.lng });
     },
   });
@@ -43,6 +44,7 @@ export default function PlanMapEditor({
 }) {
   const center = polygonCenter(site);
   const polygonPositions = (site?.polygon ?? []).map((point) => [point.latitude, point.longitude]);
+  const activeWorker = crew.find((worker) => worker.workerId === activeWorkerId) ?? null;
 
   return (
     <div className={`hs-advanced-map mode-${mode}`}>
@@ -58,7 +60,7 @@ export default function PlanMapEditor({
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <MapViewport site={site} />
-        <MapClickHandler onClick={onMapClick} />
+        <MapClickHandler enabled={mode === "draw" || mode === "worker"} onClick={onMapClick} />
         {polygonPositions.length >= 3 ? (
           <Polygon positions={polygonPositions} pathOptions={{ weight: 3, fillOpacity: 0.12 }} />
         ) : null}
@@ -74,14 +76,16 @@ export default function PlanMapEditor({
             radius={activeWorkerId === worker.workerId ? 10 : 8}
             pathOptions={{ weight: activeWorkerId === worker.workerId ? 4 : 2 }}
           >
-            <Tooltip permanent direction="top" offset={[0, -8]}>{index + 1}</Tooltip>
+            <Tooltip permanent direction="top" offset={[0, -8]}>
+              {index + 1} · {worker.name || worker.workerId}
+            </Tooltip>
           </CircleMarker>
         ) : null)}
       </MapContainer>
       <div className="hs-advanced-map-status">
-        {mode === "draw" ? "Tap around the outside of the full site boundary." : null}
-        {mode === "worker" ? "Tap inside the boundary to place the selected worker." : null}
-        {mode === "idle" ? "The site polygon and worker points are used as planning inputs." : null}
+        {mode === "draw" ? "Boundary mode: tap around the outside edge of the full operational site." : null}
+        {mode === "worker" ? `Worker placement: tap inside the site boundary to place ${activeWorker?.name || activeWorkerId || "the selected worker"}.` : null}
+        {mode === "idle" ? `${polygonPositions.length >= 3 ? "Site boundary locked" : "Site boundary incomplete"} · ${crew.filter((worker) => worker.position).length}/${crew.length} worker positions recorded.` : null}
       </div>
     </div>
   );
