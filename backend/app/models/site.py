@@ -32,6 +32,13 @@ class OperationalAttentionGroup(StrEnum):
     SCREENING_UNAVAILABLE = "screening_unavailable"
 
 
+class SiteZoneType(StrEnum):
+    WORK = "work"
+    RECOVERY = "recovery"
+    RESTRICTED = "restricted"
+    TRANSIT = "transit"
+
+
 class SiteWorkerPosition(StrictModel):
     latitude: float = Field(ge=-90.0, le=90.0)
     longitude: float = Field(ge=-180.0, le=180.0)
@@ -62,12 +69,37 @@ def _point_in_collection(longitude: float, latitude: float, collection: PolygonF
     )
 
 
+class SiteOperationalZone(StrictModel):
+    zone_id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=120)
+    zone_type: SiteZoneType
+    active: bool = True
+    relocation_allowed: bool = False
+    polygon: PolygonFeatureCollection
+
+    @model_validator(mode="after")
+    def valid_zone(self) -> "SiteOperationalZone":
+        if len(self.polygon.features) != 1:
+            raise ValueError("each operational zone must contain exactly one polygon feature")
+        if self.zone_type in {SiteZoneType.RESTRICTED, SiteZoneType.TRANSIT} and self.relocation_allowed:
+            raise ValueError("restricted/transit zones cannot be relocation targets")
+        return self
+
+
 class SiteWorkerAssignment(StrictModel):
     worker: WorkerContext
     task: TaskContext
     position: SiteWorkerPosition | None = None
     shift_tasks: list[ShiftTaskPlan] | None = Field(default=None, min_length=1, max_length=6)
     display_label: str | None = Field(default=None, max_length=100)
+    allowed_zone_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("allowed_zone_ids")
+    @classmethod
+    def unique_allowed_zones(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("allowed_zone_ids must be unique")
+        return value
 
     @model_validator(mode="after")
     def valid_shift_tasks(self) -> "SiteWorkerAssignment":
@@ -80,6 +112,7 @@ class SiteOperationsRequest(StrictModel):
     location: USSiteLocation
     timezone_name: str = "America/Phoenix"
     site_polygon: PolygonFeatureCollection | None = None
+    operational_zones: list[SiteOperationalZone] = Field(default_factory=list, max_length=20)
     analysis_datetime: datetime | None = None
     assignments: list[SiteWorkerAssignment] = Field(min_length=1, max_length=25)
     forecast_offset_hours: list[int] = Field(default_factory=lambda: [1, 3, 6, 9, 12], min_length=1, max_length=5)
@@ -114,18 +147,43 @@ class SiteOperationsRequest(StrictModel):
         if self.include_shift_optimization and not self.include_prediction:
             raise ValueError("include_shift_optimization=true requires include_prediction=true")
 
+        zones = {zone.zone_id: zone for zone in self.operational_zones}
+        if len(zones) != len(self.operational_zones):
+            raise ValueError("operational zone IDs must be unique")
+        if self.operational_zones and self.site_polygon is None:
+            raise ValueError("operational_zones require site_polygon")
+
         if self.site_polygon is not None:
             if len(self.site_polygon.features) > 8:
                 raise ValueError("site_polygon supports at most 8 polygon features")
             if not _point_in_collection(self.location.longitude, self.location.latitude, self.site_polygon):
                 raise ValueError("location must fall inside site_polygon")
+            for zone in self.operational_zones:
+                ring = zone.polygon.features[0].geometry.coordinates[0]
+                for longitude, latitude, *_ in ring[:-1]:
+                    if not _point_in_collection(longitude, latitude, self.site_polygon):
+                        raise ValueError(f"zone {zone.zone_id} must stay inside site_polygon")
             for item in self.assignments:
                 if item.position is None:
                     continue
                 if not _point_in_collection(item.position.longitude, item.position.latitude, self.site_polygon):
-                    raise ValueError(
-                        f"worker {item.worker.worker_id} position must fall inside site_polygon"
-                    )
+                    raise ValueError(f"worker {item.worker.worker_id} position must fall inside site_polygon")
+                if self.operational_zones:
+                    zone_id = item.worker.zone_id
+                    zone = zones.get(zone_id or "")
+                    if zone is None or not zone.active or zone.zone_type != SiteZoneType.WORK:
+                        raise ValueError(f"worker {item.worker.worker_id} requires an active work zone")
+                    if not _point_in_collection(item.position.longitude, item.position.latitude, zone.polygon):
+                        raise ValueError(f"worker {item.worker.worker_id} position must fall inside assigned work zone")
+                    for allowed_id in item.allowed_zone_ids:
+                        allowed = zones.get(allowed_id)
+                        if (
+                            allowed is None
+                            or not allowed.active
+                            or not allowed.relocation_allowed
+                            or allowed.zone_type not in {SiteZoneType.WORK, SiteZoneType.RECOVERY}
+                        ):
+                            raise ValueError(f"worker {item.worker.worker_id} has invalid allowed zone {allowed_id}")
         return self
 
 
@@ -134,6 +192,9 @@ class SiteWorkerSnapshot(BaseModel):
     display_label: str | None = None
     position: SiteWorkerPosition | None = None
     zone_id: str | None = None
+    zone_name: str | None = None
+    zone_type: SiteZoneType | None = None
+    allowed_zone_ids: list[str] = Field(default_factory=list)
     task_id: str
     task_name: str
     workload_level: WorkloadLevel
@@ -143,6 +204,8 @@ class SiteWorkerSnapshot(BaseModel):
     attention_group: OperationalAttentionGroup
     attention_order: int
     current_assessment: RiskAssessment
+    heat_outlook: PredictHeatOutlookResponse | None = None
+    spatial_heat: SpatialHeatResponse | None = None
     shift_optimization: ShiftOptimizationResponse | None = None
     contextual_flags: list[str]
     recommended_controls: list[str]
@@ -153,6 +216,9 @@ class SiteOperationsSummary(BaseModel):
     worker_count: int
     workers_with_precise_location_count: int = 0
     site_polygon_feature_count: int = 0
+    operational_zone_count: int = 0
+    active_work_zone_count: int = 0
+    active_recovery_zone_count: int = 0
     evidence_gap_count: int
     screening_band_counts: dict[str, int]
     direct_sun_worker_count: int
@@ -185,6 +251,7 @@ class SiteOperationsResponse(BaseModel):
     location: USSiteLocation
     timezone_name: str
     site_polygon: PolygonFeatureCollection | None = None
+    operational_zones: list[SiteOperationalZone] = Field(default_factory=list)
     site_heatmap_activity_id: str | None = None
     site_heatmap_granularity: Literal[60, 80, 100] | None = None
     shared_environment: EnvironmentalConditions
