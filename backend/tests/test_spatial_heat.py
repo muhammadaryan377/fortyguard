@@ -46,7 +46,10 @@ def test_spatial_endpoint_registered():
 
 
 def test_containing_reference_candidates_and_sanitized_output():
-    result = response([square(-112.074,33.4484,40), square(-112.070,33.4484,35), square(-112.068,33.4484,38)])
+    result = response(
+        [square(-112.074,33.4484,40), square(-112.070,33.4484,35), square(-112.068,33.4484,38)],
+        search_radius_meters=800,
+    )
     assert result.status == "available" and result.site_reference.site_temperature_c == 40
     assert [c.temperature_c for c in result.candidates] == [35,38]
     assert all(c.cooler_by_c > 0 for c in result.candidates)
@@ -94,7 +97,7 @@ def test_min_and_max_without_representative_temperature_fail_closed():
 def test_ranking_coldest_distance_provider_order_and_limit():
     features = [square(-112.074,33.4484,40), square(-112.060,33.4484,30),
         square(-112.072,33.4484,32), square(-112.070,33.4484,30), square(-112.070,33.4484,30)]
-    result = response(features, max_candidates=3)
+    result = response(features, max_candidates=3, search_radius_meters=1500)
     assert [c.tile_id for c in result.candidates] == ["tile-0003","tile-0004","tile-0001"]
     assert len(result.candidates) == 3
 
