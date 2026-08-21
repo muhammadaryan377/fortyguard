@@ -5,6 +5,7 @@ import pytest
 from app.models.fortyguard import FortyGuardJobStatus, PolygonFeatureCollection
 from app.models.risk import USSiteLocation
 from app.models.spatial import SpatialHeatRequest
+from app.services.spatial_context import operational_polygon_context
 from app.services.spatial_heat import analyze_spatial_features, create_spatial_heat
 
 
@@ -127,3 +128,22 @@ async def test_spatial_provider_uses_exact_operational_polygon_as_aoi():
     assert client.request is not None
     assert client.request.polygon_aoi == polygon
     assert client.request.analytic_type == "tcm"
+
+
+@pytest.mark.asyncio
+async def test_cycle_context_applies_boundary_when_inner_spatial_request_omits_it():
+    polygon = operational_polygon()
+    request = SpatialHeatRequest(
+        location=location(),
+        search_radius_meters=800,
+    )
+    client = RecordingClient()
+    token = operational_polygon_context.set(polygon)
+    try:
+        result = await create_spatial_heat(request, client=client, clock=lambda: NOW)
+    finally:
+        operational_polygon_context.reset(token)
+
+    assert client.request is not None
+    assert client.request.polygon_aoi == polygon
+    assert all(tile.inside_operational_boundary is not None for tile in result.tiles)
