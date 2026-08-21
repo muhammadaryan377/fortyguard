@@ -107,8 +107,13 @@ function AgentWorkerResult({ result, snapshot, crew, site }) {
         <div className="hs-worker-schedule-title"><Clock3 size={16} /><strong>Worker timeline · when to do what</strong></div>
         <div className="hs-schedule-row">
           <span>{configured?.shiftStart || "--"}</span>
-          <strong>Shift begins · {configured?.currentTask || "Current task"}</strong>
-          <em>{Number(configured?.duration || 0) || "--"} min exposure</em>
+          <strong>Shift begins</strong>
+          <em>Planning window opens</em>
+        </div>
+        <div className="hs-schedule-row">
+          <span>Now</span>
+          <strong>{configured?.currentTask || "Current task"}</strong>
+          <em>{Number(configured?.duration || 0) || "--"} min expected exposure</em>
         </div>
         {schedule.length ? schedule.map((item) => (
           <div className="hs-schedule-row" key={`${item.task_id}-${item.candidate_offset_hours}`}>
@@ -236,23 +241,26 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
         <section className="hs-advanced-card hs-active-crew-card">
           <div className="hs-advanced-card-heading"><div><span>2 · WORKER INPUT REVIEW</span><h2>What the agent will know about each person’s work</h2><p>Check the location and operational context now. The generated plan will preserve this worker-by-worker structure.</p></div><div className="hs-crew-count"><Users size={17} /><strong>{crew.length}</strong><span>workers</span></div></div>
           <div className="hs-advanced-worker-list">
-            {crew.map((worker, index) => (
-              <article className="hs-worker-plan-result" key={worker.workerId}>
-                <div className="hs-worker-plan-result-head">
-                  <div>
-                    <span>WORKER {String(index + 1).padStart(2, "0")} · {worker.zoneLabel || "Area not set"}</span>
-                    <h3>{worker.name}</h3>
-                    <small>{worker.workerId} · {worker.position ? `${worker.position.latitude.toFixed(5)}, ${worker.position.longitude.toFixed(5)}` : "No map point"}</small>
+            {crew.map((worker, index) => {
+              const pointReady = Boolean(worker.position && pointInPolygon(worker.position, site?.polygon ?? []));
+              return (
+                <article className="hs-worker-plan-result" key={worker.workerId}>
+                  <div className="hs-worker-plan-result-head">
+                    <div>
+                      <span>WORKER {String(index + 1).padStart(2, "0")} · {worker.zoneLabel || "Area not set"}</span>
+                      <h3>{worker.name}</h3>
+                      <small>{worker.workerId} · {worker.position ? `${worker.position.latitude.toFixed(5)}, ${worker.position.longitude.toFixed(5)}` : "No map point"}</small>
+                    </div>
+                    <div className="hs-worker-risk-badge"><strong>{worker.currentTask || "Task missing"}</strong><span>{exposureLabel(worker)}</span></div>
                   </div>
-                  <div className="hs-worker-risk-badge"><strong>{worker.currentTask || "Task missing"}</strong><span>{exposureLabel(worker)}</span></div>
-                </div>
-                <div className="hs-plan-input-grid">
-                  <article className={worker.position ? "ready" : ""}><MapPin size={18} /><div><strong>{worker.zoneLabel || "Location incomplete"}</strong><span>{worker.position ? "Exact point inside site" : "Place worker on map"}</span></div></article>
-                  <article className={worker.shiftStart && worker.shiftEnd > worker.shiftStart ? "ready" : ""}><Clock3 size={18} /><div><strong>{shiftLabel(worker)}</strong><span>Shift planning window</span></div></article>
-                  <article className="ready"><ShieldCheck size={18} /><div><strong>{worker.outdoor ? (worker.directSun ? "Outdoor · direct sun" : "Outdoor · no direct sun") : "Indoor / sheltered"}</strong><span>{humanize(worker.ppe)} PPE · {worker.acclimatized ? "acclimatized" : "not acclimatized"}</span></div></article>
-                </div>
-              </article>
-            ))}
+                  <div className="hs-plan-input-grid">
+                    <article className={pointReady ? "ready" : ""}><MapPin size={18} /><div><strong>{worker.zoneLabel || "Location incomplete"}</strong><span>{pointReady ? "Exact point inside site" : "Place worker inside site"}</span></div></article>
+                    <article className={worker.shiftStart && worker.shiftEnd > worker.shiftStart ? "ready" : ""}><Clock3 size={18} /><div><strong>{shiftLabel(worker)}</strong><span>Shift planning window</span></div></article>
+                    <article className="ready"><ShieldCheck size={18} /><div><strong>{worker.outdoor ? (worker.directSun ? "Outdoor · direct sun" : "Outdoor · no direct sun") : "Indoor / sheltered"}</strong><span>{humanize(worker.ppe)} PPE · {worker.acclimatized ? "acclimatized" : "not acclimatized"}</span></div></article>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
       ) : null}
