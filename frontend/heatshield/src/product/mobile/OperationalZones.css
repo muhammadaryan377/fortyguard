@@ -37,4 +37,11 @@
 .hs-zone-legend i.work { background:#f97316; }
 .hs-zone-legend i.recovery { background:#16a34a; }
 .hs-zone-legend i.restricted { background:#dc2626; }
+.hs-worker-location-row select { width:100%; min-height:44px; border:1px solid #d6e1ef; border-radius:12px; padding:0 12px; background:#fff; color:#17324f; font:inherit; }
+.hs-zone-alternatives { margin:14px 0; padding:13px; border:1px solid #dfe8f2; border-radius:14px; background:#f8fbff; }
+.hs-zone-alternatives > span { display:block; margin-bottom:8px; color:#64748b; font-size:.72rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.hs-zone-alternatives > div { display:flex; flex-wrap:wrap; gap:7px; }
+.hs-zone-alternatives button { display:inline-flex; align-items:center; gap:5px; border:1px solid #d7e3ef; border-radius:999px; padding:7px 10px; background:#fff; color:#475569; font:inherit; font-size:.76rem; font-weight:750; cursor:pointer; }
+.hs-zone-alternatives button.selected { border-color:#86efac; background:#f0fdf4; color:#166534; }
+.hs-zone-alternatives small { color:#64748b; }
 @media (max-width:720px) { .hs-zone-add-row { grid-template-columns:1fr; } .hs-zone-row-controls { align-items:stretch; } }
