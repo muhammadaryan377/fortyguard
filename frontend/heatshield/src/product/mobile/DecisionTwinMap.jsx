@@ -11,6 +11,13 @@ import {
 import { loadCrewMap, polygonCenter } from "./planWorkspace.js";
 import "./DecisionTwinMap.css";
 
+const ZONE_STYLE = {
+  work: { color: "#f97316", fillColor: "#fb923c", fillOpacity: 0.08, weight: 2 },
+  recovery: { color: "#16a34a", fillColor: "#4ade80", fillOpacity: 0.1, weight: 2 },
+  restricted: { color: "#dc2626", fillColor: "#f87171", fillOpacity: 0.07, weight: 2, dashArray: "6 5" },
+  transit: { color: "#64748b", fillColor: "#94a3b8", fillOpacity: 0.04, weight: 1.5, dashArray: "6 5" },
+};
+
 function TwinViewport({ site }) {
   const map = useMap();
   useEffect(() => {
@@ -35,8 +42,8 @@ function relativeTileStyle(temperature, minimum, maximum) {
   return {
     color: `hsl(${hue} 72% 42%)`,
     fillColor: `hsl(${hue} 78% 50%)`,
-    fillOpacity: 0.27,
-    weight: 1.2,
+    fillOpacity: 0.25,
+    weight: 1.1,
   };
 }
 
@@ -49,13 +56,12 @@ export default function DecisionTwinMap({
   onSelectCandidate,
 }) {
   const sitePositions = (site?.polygon || []).map((point) => [point.latitude, point.longitude]);
+  const zones = site?.zones || [];
   const tiles = spatial?.tiles || [];
   const candidates = spatial?.candidates || [];
   const storedCrew = site?.id ? (loadCrewMap()[site.id] || []) : [];
   const visibleCrew = crew.length ? crew : storedCrew.length ? storedCrew : worker ? [worker] : [];
-  const temperatures = tiles
-    .map((tile) => Number(tile.temperature_c))
-    .filter(Number.isFinite);
+  const temperatures = tiles.map((tile) => Number(tile.temperature_c)).filter(Number.isFinite);
   const minimum = temperatures.length ? Math.min(...temperatures) : null;
   const maximum = temperatures.length ? Math.max(...temperatures) : null;
 
@@ -64,17 +70,12 @@ export default function DecisionTwinMap({
       <div className="hs-twin-heading">
         <div>
           <span>LIVE OPERATIONAL DIGITAL TWIN</span>
-          <h3>Active crew + FortyGuard thermal tiles + in-site alternatives</h3>
+          <h3>Master site + operational zones + crew + FortyGuard thermal tiles</h3>
         </div>
-        <small>Relative tile color is based only on temperatures returned in this scan; it is not a safety band.</small>
+        <small>Thermal colors are relative to this provider scan, not safety bands. Zone outlines come from supervisor setup.</small>
       </div>
       <div className="hs-twin-map-wrap">
-        <MapContainer
-          center={polygonCenter(site)}
-          zoom={17}
-          scrollWheelZoom
-          className="hs-twin-map"
-        >
+        <MapContainer center={polygonCenter(site)} zoom={17} scrollWheelZoom className="hs-twin-map">
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -84,11 +85,10 @@ export default function DecisionTwinMap({
           {tiles.map((tile) => {
             const ring = tile?.polygon_coordinates?.[0] || [];
             if (ring.length < 4) return null;
-            const positions = ring.map((point) => [point[1], point[0]]);
             return (
               <Polygon
                 key={tile.tile_id}
-                positions={positions}
+                positions={ring.map((point) => [point[1], point[0]])}
                 pathOptions={relativeTileStyle(tile.temperature_c, minimum, maximum)}
               >
                 <Tooltip>
@@ -99,8 +99,25 @@ export default function DecisionTwinMap({
             );
           })}
 
+          {zones.map((zone) => {
+            const positions = (zone.polygon || []).map((point) => [point.latitude, point.longitude]);
+            if (positions.length < 3) return null;
+            const base = ZONE_STYLE[zone.type] || ZONE_STYLE.transit;
+            return (
+              <Polygon
+                key={`zone-${zone.id}`}
+                positions={positions}
+                pathOptions={{ ...base, opacity: zone.active ? 1 : 0.35, fillOpacity: zone.active ? base.fillOpacity : 0.02 }}
+              >
+                <Tooltip sticky>{zone.name} · {zone.type}{zone.relocationAllowed ? " · alternative enabled" : ""}</Tooltip>
+              </Polygon>
+            );
+          })}
+
           {sitePositions.length >= 3 ? (
-            <Polygon positions={sitePositions} pathOptions={{ color: "#0f172a", weight: 3, fillOpacity: 0.02 }} />
+            <Polygon positions={sitePositions} pathOptions={{ color: "#2563eb", weight: 3, fillOpacity: 0.01 }}>
+              <Tooltip sticky>Master site boundary</Tooltip>
+            </Polygon>
           ) : null}
 
           {visibleCrew.map((member) => {
@@ -148,11 +165,14 @@ export default function DecisionTwinMap({
           })}
         </MapContainer>
       </div>
-      <div className="hs-twin-legend">
+      <div className="hs-twin-legend hs-twin-legend-zones">
         <span><i className="worker" />Selected worker</span>
-        <span><i className="crew" />Other active crew</span>
-        <span><i className="candidate" />Cooler sampled candidate</span>
-        <span><i className="boundary" />Operational boundary</span>
+        <span><i className="crew" />Other crew</span>
+        <span><i className="candidate" />Cooler candidate</span>
+        <span><i className="zone-work" />Work zone</span>
+        <span><i className="zone-recovery" />Recovery zone</span>
+        <span><i className="zone-restricted" />Restricted</span>
+        <span><i className="boundary" />Master boundary</span>
         <strong>{minimum === null || maximum === null ? "Thermal layer pending" : `${minimum.toFixed(1)}–${maximum.toFixed(1)}°C mapped range`}</strong>
       </div>
     </section>
