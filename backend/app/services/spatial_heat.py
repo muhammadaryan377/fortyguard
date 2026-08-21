@@ -98,15 +98,31 @@ def analyze_spatial_features(map_data: dict[str, Any] | None, request: SpatialHe
         candidates=candidates, summary=summary, **base)
 
 
+def _granularity_candidates(configured: int) -> list[int]:
+    return [configured] if configured == 100 else [configured, 100]
+
+
 async def create_spatial_heat(request: SpatialHeatRequest, *, client: FortyGuardClient = fortyguard_client,
                               clock: Callable[[], datetime] | None = None) -> SpatialHeatResponse:
     now = (clock or (lambda: datetime.now(UTC)))()
     generated = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
     local = generated.astimezone(ZoneInfo(request.timezone_name))
-    heatmap_request = HeatmapRequest(polygon_aoi=build_site_polygon(request.location.latitude, request.location.longitude, radius_meters=request.search_radius_meters),
-        date_time=LiveDateTimeFilter(start_date=local.date(), start_time=local.timetz().replace(tzinfo=None), filter_type=1),
-        granularity=request.granularity, analytic_type="tcm")
-    activity_id = await client.create_heatmap(heatmap_request)
-    job = await client.wait_for_result(activity_id)
-    result = normalize_heatmap_result(job.result or {})
-    return analyze_spatial_features(result.map_data, request, generated_at=generated, activity_id=activity_id)
+    date_time = LiveDateTimeFilter(start_date=local.date(), start_time=local.timetz().replace(tzinfo=None), filter_type=1)
+    last_response: SpatialHeatResponse | None = None
+
+    for granularity in _granularity_candidates(int(request.granularity)):
+        candidate_request = request if granularity == request.granularity else request.model_copy(update={"granularity": granularity})
+        heatmap_request = HeatmapRequest(
+            polygon_aoi=build_site_polygon(request.location.latitude, request.location.longitude, radius_meters=request.search_radius_meters),
+            date_time=date_time, granularity=granularity, analytic_type="tcm")
+        activity_id = await client.create_heatmap(heatmap_request)
+        job = await client.wait_for_result(activity_id)
+        result = normalize_heatmap_result(job.result or {})
+        response = analyze_spatial_features(result.map_data, candidate_request, generated_at=generated, activity_id=activity_id)
+        last_response = response
+        if response.status in {"available", "no_cooler_candidate"}:
+            return response
+
+    if last_response is not None:
+        return last_response
+    return analyze_spatial_features(None, request, generated_at=generated, activity_id=None)

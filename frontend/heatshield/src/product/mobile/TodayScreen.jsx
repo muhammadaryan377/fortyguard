@@ -64,20 +64,28 @@ function riskTitle(band, supported, cycle) {
   return String(BAND_LABEL[band] ?? "HEAT RISK").toUpperCase();
 }
 
-function guidanceForBand(band, supported, cycle) {
+function guidanceForBand(band, supported, cycle, replayMode) {
   if (!supported) {
     return "Current local weather is shown for this location. FortyGuard occupational heat intelligence is available only at supported U.S. worksites.";
   }
   if (!cycle) {
-    return "HeatShield is loading the current FortyGuard worksite scan and will update this card when the evidence is ready.";
+    return replayMode
+      ? "HeatShield is loading the verified FortyGuard Phoenix demo snapshot and will update this card when the evidence is ready."
+      : "HeatShield is loading the current FortyGuard worksite scan and will update this card when the evidence is ready.";
   }
   if (["danger", "extreme_danger"].includes(band)) {
-    return "Avoid heavy outdoor work right now. Take a break, hydrate, and move to a cooler or shaded area.";
+    return replayMode
+      ? "The verified snapshot shows severe heat stress. Heavy outdoor work should be reduced, with hydration, recovery, and cooler-area controls prioritized."
+      : "Avoid heavy outdoor work right now. Take a break, hydrate, and move to a cooler or shaded area.";
   }
   if (["caution", "extreme_caution"].includes(band)) {
-    return "Reduce intensity, schedule frequent recovery breaks, hydrate often, and watch for heat symptoms.";
+    return replayMode
+      ? "The verified snapshot shows elevated heat stress. Reduce intensity, schedule recovery breaks, hydrate often, and monitor workers closely."
+      : "Reduce intensity, schedule frequent recovery breaks, hydrate often, and watch for heat symptoms.";
   }
-  return "Conditions are currently lower risk. Keep hydration, shade, and normal heat-safety controls in place.";
+  return replayMode
+    ? "The verified snapshot is comparatively lower risk, but normal hydration, shade, and heat-safety controls still apply."
+    : "Conditions are currently lower risk. Keep hydration, shade, and normal heat-safety controls in place.";
 }
 
 function uvLabel(value) {
@@ -118,6 +126,7 @@ export default function TodayScreen({
   onNavigate,
 }) {
   const locating = locationBusy && !location;
+  const replayMode = Boolean(cycle?.request?.analysis_datetime ?? location?.analysis_datetime);
   const env = cycle?.current_assessment?.environmental_evidence ?? {};
   const screening = cycle?.current_assessment?.screening ?? {};
   const currentWeather = weather?.current ?? {};
@@ -136,9 +145,11 @@ export default function TodayScreen({
   );
   const heatIndexF = cToF(env.heat_index_c);
   const humidity = finite(
-    env.relative_humidity_percent ??
-      env.relative_humidity ??
-      currentWeather.relative_humidity_percent,
+    replayMode
+      ? currentWeather.relative_humidity_percent
+      : env.relative_humidity_percent ??
+        env.relative_humidity ??
+        currentWeather.relative_humidity_percent,
   );
   const windMph = kmhToMph(currentWeather.wind_speed_kmh);
   const uv = finite(
@@ -174,25 +185,35 @@ export default function TodayScreen({
 
   const kicker = locating
     ? "DETECTING CURRENT LOCATION"
-    : riskTitle(band, fortyGuardSupported, cycle);
+    : replayMode && !cycle
+      ? "VERIFIED HEAT RISK CHECK"
+      : riskTitle(band, fortyGuardSupported, cycle);
 
   const heatIndexText = locating
     ? "Getting your location and current conditions…"
     : heatIndexF !== null
-      ? `Heat index: ${rounded(heatIndexF)}°F`
+      ? replayMode
+        ? `Verified heat index: ${rounded(heatIndexF)}°F`
+        : `Heat index: ${rounded(heatIndexF)}°F`
       : analysisBusy
-        ? "FortyGuard worksite scan is running…"
+        ? replayMode
+          ? "Loading verified FortyGuard Phoenix evidence…"
+          : "FortyGuard worksite scan is running…"
         : weatherBusy
           ? "Loading current weather conditions…"
           : cycle
-            ? "Heat index is not available in the current provider evidence."
+            ? replayMode
+              ? "Heat index is not available in the verified provider snapshot."
+              : "Heat index is not available in the current provider evidence."
             : fortyGuardSupported
-              ? "Current worksite heat evidence is loading."
+              ? replayMode
+                ? "Verified Phoenix heat evidence is loading."
+                : "Current worksite heat evidence is loading."
               : "General weather context is shown for this location.";
 
   const guidance = locating
     ? "Allow location access in your browser so HeatShield can automatically load conditions for your current worksite."
-    : guidanceForBand(band, fortyGuardSupported, cycle);
+    : guidanceForBand(band, fortyGuardSupported, cycle, replayMode);
 
   return (
     <div className="hs-screen hs-home-screen-v1">
@@ -206,7 +227,7 @@ export default function TodayScreen({
           <div className="hs-home-temp-row">
             <div className="hs-home-temp-copy">
               <strong>{rounded(airTempF)}<sup>°F</sup></strong>
-              <span>Feels like {rounded(feelsLikeF)}°F</span>
+              <span>{replayMode && cycle ? "Verified feels like" : "Feels like"} {rounded(feelsLikeF)}°F</span>
             </div>
             <div className="hs-home-thermometer" aria-hidden="true">
               <ThermometerSun size={35} />
@@ -222,20 +243,20 @@ export default function TodayScreen({
         </div>
       </section>
 
-      <section className="hs-home-stat-row" aria-label="Current conditions">
+      <section className="hs-home-stat-row" aria-label={replayMode ? "Live weather context" : "Current conditions"}>
         <div>
           <Droplets size={19} />
-          <span>Humidity</span>
+          <span>{replayMode ? "Live humidity" : "Humidity"}</span>
           <strong>{rounded(humidity)}%</strong>
         </div>
         <div>
           <Wind size={19} />
-          <span>Wind</span>
+          <span>{replayMode ? "Live wind" : "Wind"}</span>
           <strong>{rounded(windMph)} mph</strong>
         </div>
         <div>
           <SunMedium size={19} />
-          <span>UV Index</span>
+          <span>{replayMode ? "Live UV" : "UV Index"}</span>
           <strong>{uvLabel(uv)}</strong>
         </div>
       </section>
@@ -250,7 +271,11 @@ export default function TodayScreen({
               : coolerMiles !== null
                 ? `${coolerMiles.toFixed(1)} mi away`
                 : fortyGuardSupported
-                  ? analysisBusy ? "Comparing nearby heat…" : "Scan to compare nearby heat"
+                  ? analysisBusy
+                    ? "Comparing nearby heat…"
+                    : cycle?.spatial_heat?.status === "insufficient_data"
+                      ? "No mapped comparison available"
+                      : "Scan to compare nearby heat"
                   : "Available at supported U.S. worksites"}
           </strong>
           {coolerTempF !== null ? <em>{rounded(coolerTempF)}°F candidate</em> : null}
@@ -287,7 +312,9 @@ export default function TodayScreen({
               : locating
                 ? "Loading local conditions automatically"
                 : fortyGuardSupported
-                  ? analysisBusy ? "Building current recommendation" : "Get AI Recommendation"
+                  ? analysisBusy
+                    ? replayMode ? "Building verified recommendation" : "Building current recommendation"
+                    : "Get AI Recommendation"
                   : "View available local weather context"}
           </small>
         </span>
@@ -295,7 +322,9 @@ export default function TodayScreen({
       </button>
 
       <p className="hs-home-source-note">
-        <MapPin size={13} /> FortyGuard is the primary heat-risk evidence source; weather context supplements the selected location.
+        <MapPin size={13} /> {replayMode
+          ? "Heat risk uses verified FortyGuard Phoenix evidence from Jul 15, 2024 at 2 PM; live weather powers the context cards."
+          : "FortyGuard is the primary heat-risk evidence source; weather context supplements the selected location."}
       </p>
     </div>
   );

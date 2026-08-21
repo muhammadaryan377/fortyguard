@@ -20,9 +20,10 @@ class Settings(BaseSettings):
     heatshield_demo_longitude: float = -112.0740
     heatshield_max_data_age_minutes: int = 30
     heatshield_max_future_skew_minutes: int = 5
-    # Validated working live TCM AOI default; this is not a provider minimum.
+    # 100 m is the verified Phoenix TCM demo grid. Runtime heatmap extraction
+    # can still retry this grid when another configured granularity is empty.
     heatshield_site_polygon_radius_meters: float = 300.0
-    heatshield_live_granularity_meters: Literal[60, 80, 100] = 60
+    heatshield_live_granularity_meters: Literal[60, 80, 100] = 100
     heatshield_timestamp_tolerance_minutes: int = 5
     # Comma-separated frontend origins allowed to call this API in browsers.
     heatshield_cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"

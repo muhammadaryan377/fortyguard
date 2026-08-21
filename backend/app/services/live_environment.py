@@ -181,30 +181,49 @@ def extract_verified_temperature(
     )
 
 
+def heatmap_granularity_candidates() -> list[int]:
+    """Try the configured grid first, then the verified 100 m TCM grid."""
+
+    configured = int(settings.heatshield_live_granularity_meters)
+    return [configured] if configured == 100 else [configured, 100]
+
+
 async def get_verified_temperature(
     location: USSiteLocation,
     date_time: LiveDateTimeFilter,
     *,
     client: FortyGuardClient = fortyguard_client,
 ) -> VerifiedTemperature:
-    heatmap_request = HeatmapRequest(
-        polygon_aoi=build_site_polygon(location.latitude, location.longitude),
-        date_time=date_time,
-        granularity=settings.heatshield_live_granularity_meters,
-        analytic_type="tcm",
-    )
-    activity_id = await client.create_heatmap(heatmap_request)
-    job = await client.wait_for_result(activity_id)
-    heatmap = normalize_heatmap_result(job.result or {})
     requested = requested_timestamp(date_time).isoformat(timespec="minutes")
-    verified = extract_verified_temperature(
-        heatmap.map_data,
-        latitude=location.latitude,
-        longitude=location.longitude,
-        timestamp=requested,
-        activity_id=activity_id,
-    )
-    return verified
+    last_error: TemperatureUnavailableError | None = None
+
+    for granularity in heatmap_granularity_candidates():
+        heatmap_request = HeatmapRequest(
+            polygon_aoi=build_site_polygon(location.latitude, location.longitude),
+            date_time=date_time,
+            granularity=granularity,
+            analytic_type="tcm",
+        )
+        activity_id = await client.create_heatmap(heatmap_request)
+        job = await client.wait_for_result(activity_id)
+        heatmap = normalize_heatmap_result(job.result or {})
+
+        try:
+            verified = extract_verified_temperature(
+                heatmap.map_data,
+                latitude=location.latitude,
+                longitude=location.longitude,
+                timestamp=requested,
+                activity_id=activity_id,
+            )
+            verified.raw["granularity_meters"] = granularity
+            return verified
+        except TemperatureUnavailableError as exc:
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise TemperatureUnavailableError("FortyGuard heatmap did not provide usable temperature evidence")
 
 
 def _parse_provider_timestamp(value: str | None) -> datetime | None:
@@ -296,6 +315,7 @@ async def get_live_environment(
     selected.raw = {
         "selected_heatmap_feature": verified.raw.get("selected_feature"),
         "selected_heatmap_temperature_c": verified.temperature_c,
+        "heatmap_granularity_meters": verified.raw.get("granularity_meters"),
         "environmental_metadata": compact_metadata,
     }
     return selected
