@@ -12,8 +12,26 @@ export class AgenticApiError extends Error {
   }
 }
 
+function validationDetailMessage(detail) {
+  if (!Array.isArray(detail) || !detail.length) return null;
+
+  const messages = detail
+    .map((item) => {
+      const location = Array.isArray(item?.loc)
+        ? item.loc.filter((part) => part !== "body").join(".")
+        : "";
+      const message = typeof item?.msg === "string" ? item.msg : "Invalid value";
+      return location ? `${location}: ${message}` : message;
+    })
+    .filter(Boolean);
+
+  return messages.length ? `Request validation failed — ${messages.join("; ")}` : null;
+}
+
 function responseMessage(body, fallback) {
   if (typeof body?.detail === "string" && body.detail.trim()) return body.detail;
+  const validationMessage = validationDetailMessage(body?.detail);
+  if (validationMessage) return validationMessage;
   if (typeof body?.message === "string" && body.message.trim()) return body.message;
   return fallback;
 }
