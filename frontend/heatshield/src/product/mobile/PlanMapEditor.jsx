@@ -20,7 +20,7 @@ function MapViewport({ site }) {
     } else {
       map.setView(polygonCenter(site), 17);
     }
-  }, [map, site?.id, site?.polygon]);
+  }, [map, site]);
   return null;
 }
 
