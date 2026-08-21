@@ -1,16 +1,13 @@
 import { useEffect, useState } from "react";
 import {
-  BatteryFull,
   Bell,
   ChevronDown,
   ClipboardList,
   Home,
   MapPin,
   MapPinned,
-  Signal,
   UserRoundCheck,
   Users,
-  Wifi,
   X,
 } from "lucide-react";
 
@@ -100,6 +97,7 @@ function formatLocalDateTime(location, now) {
 
 function useLocationClock(location) {
   const [now, setNow] = useState(() => new Date());
+
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
@@ -113,6 +111,7 @@ export default function AppShell({
   activeTab,
   onNavigate,
   location,
+  locationBusy,
   cycle,
   message,
   error,
@@ -120,18 +119,17 @@ export default function AppShell({
   onDismissError,
 }) {
   const clock = useLocationClock(location);
-  const rawLocationName = location?.site_name || location?.name || location?.city || "Selected worksite";
+  const rawLocationName =
+    location?.site_name ||
+    location?.name ||
+    location?.city ||
+    (locationBusy ? "Finding your location…" : "Select worksite");
   const locationName = rawLocationName === "Phoenix Central City" ? "Phoenix Yard" : rawLocationName;
 
   return (
     <div className="hs-page">
       <div className="hs-app-frame">
         <header className="hs-header">
-          <div className="hs-phone-status" aria-hidden="true">
-            <strong>{clock.time}</strong>
-            <div><Signal size={14} /><Wifi size={15} /><BatteryFull size={18} /></div>
-          </div>
-
           <div className="hs-header-row">
             <Brand />
             <button
@@ -152,7 +150,9 @@ export default function AppShell({
             <span>{locationName}</span>
             <ChevronDown size={16} />
           </button>
-          <div className="hs-location-meta">{clock.time} &nbsp;•&nbsp; {clock.date}</div>
+          <div className="hs-location-meta">
+            {locationBusy && !location ? "Detecting current location…" : `${clock.time}  •  ${clock.date}`}
+          </div>
         </header>
 
         <main className="hs-content">
