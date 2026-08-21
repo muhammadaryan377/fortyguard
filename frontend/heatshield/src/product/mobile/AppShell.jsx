@@ -120,6 +120,7 @@ export default function AppShell({
 }) {
   const clock = useLocationClock(location);
   const replayMode = Boolean(location?.analysis_datetime);
+  const navActiveTab = ["site-setup", "crew-setup"].includes(activeTab) ? "plan" : activeTab;
   const rawLocationName =
     location?.site_name ||
     location?.name ||
@@ -180,7 +181,7 @@ export default function AppShell({
             <button
               key={id}
               type="button"
-              className={activeTab === id ? "active" : ""}
+              className={navActiveTab === id ? "active" : ""}
               onClick={() => onNavigate(id)}
             >
               <Icon size={21} />
