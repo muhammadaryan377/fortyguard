@@ -64,7 +64,13 @@ async def get_snapshot(snapshot_id: str) -> SiteOperationsResponse:
              response_model=SelectedWorkerCycleRequest)
 async def selected_worker_cycle_request(snapshot_id: str, worker_id: str) -> SelectedWorkerCycleRequest:
     try:
-        return get_site_orchestrator().cycle_request(snapshot_id, worker_id)
+        helper = get_site_orchestrator().cycle_request(snapshot_id, worker_id)
+        snapshot = get_site_orchestrator().get(snapshot_id)
+        if helper.cycle_request.include_spatial_intelligence and snapshot.site_polygon is not None:
+            helper.cycle_request = helper.cycle_request.model_copy(
+                update={"operational_polygon": snapshot.site_polygon}
+            )
+        return helper
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -97,7 +103,12 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
     try:
         for worker_id in ordered:
             helper = site_orchestrator.cycle_request(snapshot_id, worker_id)
-            cycle = await cycle_orchestrator.plan(helper.cycle_request)
+            cycle_request = helper.cycle_request
+            if cycle_request.include_spatial_intelligence and snapshot.site_polygon is not None:
+                cycle_request = cycle_request.model_copy(
+                    update={"operational_polygon": snapshot.site_polygon}
+                )
+            cycle = await cycle_orchestrator.plan(cycle_request)
             results.append(SiteWorkerAgentResult(worker_id=worker_id, cycle=cycle))
     except Exception as exc:
         raise _provider_error(exc) from exc
@@ -110,6 +121,7 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
             "worker_ids": ordered,
             "worker_count": len(results),
             "cycle_ids": [item.cycle.cycle_id for item in results],
+            "site_boundary_applied_to_spatial_cycles": snapshot.site_polygon is not None,
         },
     )
     return SiteAgentPlanResponse(
@@ -119,6 +131,7 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
         results=results,
         limitations=[
             "Worker cycles refresh provider evidence independently and may differ from the earlier site snapshot.",
+            "Spatial relocation candidates are eligible only when verified inside the submitted operational polygon.",
             "Every proposed action remains human-gated and must be approved before it is recorded operationally.",
         ],
     )
