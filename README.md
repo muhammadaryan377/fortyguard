@@ -1,246 +1,186 @@
 # HeatShield AI
 
-HeatShield AI is an occupational heat-risk intelligence project. This repository implements the **SENSE** FortyGuard data layer and the deterministic **ASSESS** operational risk layer.
+**HeatShield AI is a supervisor-controlled heat operations system built around FortyGuard evidence.** It turns a drawn U.S. worksite, exact worker positions, current jobs and shifts into worker-specific heat plans, time/space alternatives, Premium imagery context, human-gated agent actions, fresh-evidence verification and site-level historical heat resilience analysis.
 
-Current prototype geographic scope: **United States**. Default demo: **Phoenix, Arizona**.
+Default demo: **Phoenix, Arizona, United States**.
 
-No medical diagnosis, AI agent, scheduling, predictive model, or frontend behavior is implemented. No numeric OSHA/NIOSH occupational thresholds are configured because a reviewed threshold configuration has not been supplied.
+> HeatShield never labels a sampled cooler tile a “safe zone,” never invents missing environmental values, and never allows the AI model to execute arbitrary actions. FortyGuard supplies environmental evidence; deterministic server logic validates it; DeepSeek may select only server-defined eligible tools; a supervisor must approve operational actions.
+
+## What the product does
+
+```text
+SUPERVISOR INPUT
+full worksite polygon + exact worker locations + shifts + jobs
+        ↓
+FORTYGUARD EVIDENCE
+current TCM + environmental parameters + forecast samples
+        ↓
+DETERMINISTIC HEATSHIELD ENGINE
+screening + attention ordering + shift/time/space eligibility
+        ↓
+BOUNDED DEEPSEEK SELECTION
+server-defined empty-argument tools only
+        ↓
+DECISION WORKBENCH
+current vs better sampled time vs better sampled place
+thermal digital twin + Premium satellite/street context
+        ↓
+SUPERVISOR APPROVAL
+        ↓
+FRESH-EVIDENCE VERIFY / RECHECK
+```
+
+### Operational workflow
+
+1. **Site setup** — save/select a U.S. worksite and draw the complete operational polygon.
+2. **Crew + work context** — add workers, place each exact point inside the site, and record shift, task, workload, exposure duration, PPE, sun/outdoor context, acclimatization and permitted alternate work.
+3. **Review + generate** — inspect exactly what will be sent into planning, then build provider-backed plans for the active crew.
+4. **Worker plans** — receive a separate attention-ordered plan and timeline for every worker.
+5. **Decision Workbench** — compare the current sampled worker tile with strictly lower future samples and strictly lower in-site spatial candidates.
+6. **Operational digital twin** — view the site boundary, active crew, returned FortyGuard thermal tiles and selectable candidate locations on one map.
+7. **Premium inspection** — on demand, inspect a selected candidate with FortyGuard Satellite Segmentation and Street View Segmentation, including returned original/segmented images and class coverage.
+8. **Human-gated ACT** — enter a supervisor ID and approve only eligible server-created actions.
+9. **VERIFY / RECHECK** — obtain fresh provider evidence and preserve the original audit trail without claiming causality.
+10. **Site resilience** — run historical exceedance, persistence and time-of-measure heatmaps over the exact site polygon for a selected period and threshold.
+
+## FortyGuard usage
+
+HeatShield uses FortyGuard as the evidence engine rather than as a decorative API call.
+
+- **TCM heatmaps** for current site/worker temperature evidence.
+- **Environmental Parameters** for provider Heat Index, humidity, wet-bulb and related context.
+- **Forecast TCM heatmaps** at sampled offsets up to the provider horizon used by HeatShield (`+1`, `+3`, `+6`, `+9`, `+12` hours by default).
+- **Spatial TCM heatmaps** constrained to the supervisor-drawn operational polygon and configured worker search radius.
+- **Satellite Segmentation (Premium)** for provider-returned satellite imagery and segmentation context.
+- **Street View Segmentation (Premium)** for provider-returned street imagery and segmentation context.
+- **Historical heatmap analytics** for `exceedance`, `persistence` and `time_of_measure` site resilience views.
+
+Missing provider values remain missing. HeatShield does not substitute aggregate heatmap statistics, nearest tiles or interpolated values for a required containing-tile observation.
+
+## Spatial safety boundary
+
+Spatial relocation candidates are constrained in multiple layers:
+
+1. the exact supervisor-drawn polygon is used as the spatial heatmap AOI when available;
+2. candidate centroids must be inside that operational polygon;
+3. candidates must remain inside the configured worker search radius;
+4. DeepSeek evidence contains only candidates explicitly marked `inside_operational_boundary = true`;
+5. the cooler-zone tool rejects unverified candidates server-side;
+6. the frontend independently blocks out-of-site cooler-zone actions from approval.
+
+A candidate means **lower sampled provider temperature**, not safe, accessible, shaded, hazard-free or task-suitable. Premium imagery is contextual evidence and still requires supervisor judgment.
+
+## Agent model boundary
+
+DeepSeek is a bounded selector, not the source of environmental facts.
+
+- The server computes tool eligibility before the model is called.
+- Only eligible, server-defined, empty-argument tools are exposed.
+- Model-supplied arguments are rejected.
+- Server code constructs factual action details such as coordinates, provider temperatures and sampled timestamps.
+- At most three operational actions plus supervisor review are accepted.
+- Every operational action requires human approval.
+- The system stores compact decisions/audit state, not chain-of-thought.
+- If the model is unavailable, completed provider evidence remains available and no AI-selected action is fabricated.
+
+Current action families include cool recovery, reduced physical demand, cooler sampled period, increased monitoring, direct-sun limitation, supervisor review, boundary-verified cooler-zone candidate and sampled shift-plan candidate.
+
+## Historical site resilience
+
+`POST /api/resilience/site-history` runs three independent FortyGuard heatmaps over the exact site polygon:
+
+- **Exceedance** — hours above the selected threshold.
+- **Persistence** — longest continuous run above the selected threshold.
+- **Time of measure** — provider peak-temperature hour values.
+
+The frontend exposes 7/14/30-day presets, custom dates and a Fahrenheit threshold for U.S. operators; the backend converts the threshold to Celsius for FortyGuard. HeatShield intentionally does **not** collapse these into an invented composite resilience score.
+
+## Human-gated closed loop
+
+```text
+SENSE → ASSESS → PREDICT → DECIDE → APPROVE/ACT → VERIFY → RECHECK
+```
+
+ACT creates auditable HeatShield operational records. It does not silently move a worker, mutate a calendar or prove that a control was physically followed. VERIFY compares fresh environmental evidence and internal action state while explicitly avoiding causal claims.
+
+## Important safety scope
+
+HeatShield is an operational decision-support prototype for the hackathon. It is **not** medical advice, a medical diagnosis, a WBGT instrument, a NIOSH REL/RAL determination or a legal compliance determination.
+
+Provider `wet_bulb_temperature_c` is ordinary wet-bulb temperature and is never treated as WBGT. Heat Index screening is kept separate from task/worker context and from sparse future temperature samples.
+
+## Repository structure
+
+```text
+backend/
+  app/api/                 FastAPI routes
+  app/models/              strict request/response contracts
+  app/services/            FortyGuard, deterministic analytics, agent orchestration
+  tests/                   provider-mocked automated tests
+
+frontend/heatshield/
+  src/api/                 backend clients
+  src/product/mobile/      site, crew, plan and decision workbench UI
+
+notebooks/                 FortyGuard exploration/reference notebooks
+.github/workflows/ci.yml   backend + frontend quality gate
+```
 
 ## Setup
 
-Python 3.12 is recommended.
+### 1. Environment
 
-```powershell
-cd backend
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+Copy `.env.example` to `.env` at the repository root and provide keys locally. Never commit `.env`.
+
+Minimum live configuration:
+
+```env
+FORTYGUARD_API_KEY=...
+DEEPSEEK_API_KEY=...
 ```
 
-Copy `.env.example` to `.env` at the repository root and replace the API-key placeholder. Never commit `.env`.
+The complete supported configuration is documented in `.env.example`, including FortyGuard polling, demo site, CORS and agent settings.
 
-## Run
+### 2. Backend
 
-From `backend/`:
+Python 3.12 is recommended.
 
-```powershell
+```bash
+cd backend
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
 python -m uvicorn app.main:app --reload
 ```
 
-Health check:
+Swagger: `http://127.0.0.1:8000/docs`
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/health
+Health check: `http://127.0.0.1:8000/api/health`
+
+### 3. Frontend
+
+```bash
+cd frontend/heatshield
+npm ci
+npm run dev
 ```
 
-Expected response:
+Default Vite URL: `http://127.0.0.1:5173`
 
-```json
-{"status":"ok","service":"HeatShield AI"}
-```
+If the frontend is deployed elsewhere, add its origin to `HEATSHIELD_CORS_ORIGINS`.
 
-## FortyGuard API
-
-Open Swagger at <http://127.0.0.1:8000/docs>. The integration exposes:
-
-- `POST /api/fortyguard/heatmap` — validate and submit a heatmap job
-- `GET /api/fortyguard/status/{activity_id}` — inspect a job
-- `POST /api/fortyguard/heatmap/result` — submit and poll for a normalized final result
-- `POST /api/fortyguard/environment` — submit an environmental-parameters job
-- `POST /api/fortyguard/environment/result` — submit, poll, and normalize environmental observations
-
-In Swagger, expand an endpoint, select **Try it out**, use the generated schema/example, and execute it. A successful submission resembles:
-
-```json
-{"status":"submitted","activity_id":"provider-generated-id"}
-```
-
-A completed high-level heatmap request resembles:
-
-```json
-{
-  "activity_id": "provider-generated-id",
-  "status": "Completed",
-  "result": {
-    "map_data": {},
-    "stats_data": {},
-    "raw": {}
-  }
-}
-```
-
-The actual map and statistics content is provider-defined. Missing environmental values remain `null`; HeatShield does not calculate or fabricate them.
-
-## Deterministic risk assessment
-
-- `POST /api/risk/assess` accepts normalized environmental evidence, worker context, and task context.
-- `POST /api/risk/assess-live` accepts only a USA site, one requested hour, worker context, and task context. It does not accept a manually entered live temperature.
-
-The live evidence flow is:
-
-```text
-Location + requested hour
-  ↓
-Deterministic site polygon using the configured live AOI radius
-  ↓
-FortyGuard TCM Heatmap
-  ↓
-Verified containing GeoJSON tile value
-  ↓
-FortyGuard Environmental Parameters
-  ↓
-Timestamp-matched EnvironmentalConditions
-  ↓
-Deterministic RiskAssessment
-```
-
-Heatmap and environmental activity IDs, requested/matched timestamps, extraction method, selected containing feature, and compact provider metadata are preserved as structured provenance. The complete heatmap FeatureCollection is not embedded in live risk responses. If a containing tile value cannot be extracted, environmental observations are absent, or timestamps cannot be matched deterministically, the request fails safely. Nearest tiles and heatmap aggregate mean/minimum/maximum statistics are never substituted for a site temperature.
-
-The default live TCM site AOI radius is `300` meters (an approximately `600 m × 600 m` square) and can be overridden with `HEATSHIELD_SITE_POLYGON_RADIUS_METERS`. This is a validated working default from controlled provider testing, not a guaranteed FortyGuard minimum AOI size.
-
-When environmental evidence is missing, stale, or materially ahead of the configured current-observation clock-skew window, the engine returns `insufficient_data`. Small clock skew is controlled by `HEATSHIELD_MAX_FUTURE_SKEW_MINUTES`. When fresh evidence exists but validated numeric occupational rules are absent, it returns `configuration_required` with a `null` risk score. Operational factors such as workload, acclimatization, direct sun, exposure duration, and PPE are reported without converting them into fabricated medical or numeric risk categories.
-
-Swagger is available at <http://127.0.0.1:8000/docs>. A safe mocked/manual request shape for `/api/risk/assess` is:
-
-```json
-{
-  "environment": {
-    "source": "fortyguard",
-    "location": {"lat": 33.4484, "lon": -112.0740},
-    "timestamp": "2026-08-18T12:00:00Z",
-    "temperature_c": 30.0,
-    "raw": {"fixture": "mocked example; not a real observation"}
-  },
-  "worker": {
-    "worker_id": "W-101",
-    "site_id": "PHX-SITE-01",
-    "zone_id": "ZONE-B",
-    "acclimatized": false
-  },
-  "task": {
-    "task_id": "TASK-1",
-    "task_name": "Mock outdoor task",
-    "workload_level": "heavy",
-    "exposure_duration_minutes": 45,
-    "outdoor": true,
-    "direct_sun": true
-  }
-}
-```
-
-The timestamp must be current enough for the configured freshness window when performing a live manual test.
-
-A live request to `/api/risk/assess-live` uses this shape:
-
-```json
-{
-  "location": {
-    "site_id": "PHX-SITE-01",
-    "name": "Phoenix Outdoor Construction Site",
-    "city": "Phoenix",
-    "state": "Arizona",
-    "country": "United States",
-    "latitude": 33.4484,
-    "longitude": -112.0740
-  },
-  "date_time": {
-    "start_date": "2026-08-18",
-    "start_time": "12:00",
-    "filter_type": 1
-  },
-  "worker": {
-    "worker_id": "W-101",
-    "site_id": "PHX-SITE-01",
-    "acclimatized": false
-  },
-  "task": {
-    "task_id": "TASK-1",
-    "task_name": "Outdoor construction task",
-    "workload_level": "heavy",
-    "exposure_duration_minutes": 45,
-    "outdoor": true,
-    "direct_sun": true
-  }
-}
-```
-
-Only `filter_type: 1` is supported by the current live endpoint. Multi-period analysis is intentionally deferred to PREDICT.
-
-## Heat Index screening policy
-
-Fresh, provider-reported `heat_index_c` evidence is converted deterministically to Fahrenheit and assigned a National Weather Service environmental screening band. The policy version is `heat-index-screening-nws-2026-v1` and uses lower-inclusive, upper-exclusive software boundaries:
-
-- Below Caution: below 80°F
-- Caution: 80°F to below 90°F
-- Extreme Caution: 90°F to below 103°F
-- Danger: 103°F to below 125°F
-- Extreme Danger: 125°F and above
-
-HeatShield does not recalculate a missing Heat Index from temperature and humidity. A missing provider Heat Index produces an `unavailable` screening result. Stale, malformed, missing-timestamp, or materially future evidence produces `insufficient_data` and cannot become an available current screening.
-
-The screening result includes occupational context flags for strenuous workload, acclimatization, direct sun, PPE/clothing, and recorded exposure duration. Recommendations are deterministic operational controls concerning hydration, shade/cool recovery, rest, monitoring, workload reduction, exposure reduction, acclimatization, and cooler-period scheduling. They are not clinical treatment or mandatory legal work/rest schedules.
-
-For direct-sun tasks, the response may show `full_sun_possible_upper_bound_f = heat_index_f + 15`. This is clearly labeled as an informational upper-bound scenario based on NWS/NIOSH guidance; it is not a measured Heat Index and does not replace the provider value or its screening band.
-
-Authoritative sources:
-
-- [OSHA Heat Hazard Recognition](https://www.osha.gov/heat-exposure/hazards)
-- [CDC/NIOSH OSHA-NIOSH Heat Safety Tool](https://www.cdc.gov/niosh/heat-stress/communication-resources/app.html)
-- [CDC/NIOSH Workplace Recommendations](https://www.cdc.gov/niosh/heat-stress/recommendations/)
-- [National Weather Service Heat Index](https://www.weather.gov/ama/heatindex)
-
-Heat Index is a screening metric. OSHA notes that WBGT is more accurate for occupational heat assessment, and NIOSH recommends WBGT for REL/RAL assessment. HeatShield does **not** currently provide a WBGT measurement, NIOSH REL/RAL determination, medical diagnosis, legal compliance determination, predictive risk, or AI-agent decision. FortyGuard `wet_bulb_temperature_c` is ordinary wet-bulb temperature and is never interpreted as WBGT.
-
-## PREDICT Phase 1
-
-`POST /api/predict/heat-outlook` queries separate future FortyGuard TCM heatmaps for a small set of site-specific sample times up to 12 hours ahead. The default offsets are `+1`, `+3`, `+6`, `+9`, and `+12` hours. These are sparse forecast sample points, not a continuous hourly series.
-
-Phoenix example request:
-
-```json
-{
-  "location": {
-    "site_id": "PHX-SITE-01",
-    "name": "Phoenix Outdoor Construction Site",
-    "city": "Phoenix",
-    "state": "Arizona",
-    "country": "United States",
-    "latitude": 33.4484,
-    "longitude": -112.0740
-  },
-  "timezone_name": "America/Phoenix",
-  "offset_hours": [1, 3, 6, 9, 12]
-}
-```
-
-Each forecast temperature must come from a TCM GeoJSON tile that spatially contains the requested site. Missing points remain unavailable: HeatShield does not use nearest tiles, heatmap statistics, interpolation, or invented values. Partial provider success produces a partial outlook and retains every failed sample point with a safe reason.
-
-Phase 1 is temperature-only. It does not call Environmental Parameters as a temperature forecast, does not forecast Heat Index or humidity, and does not provide future WBGT, occupational risk scores, medical prediction, legal compliance classification, or AI-agent decisions. “Highest sampled temperature” means the highest value among requested sample times only; it is not guaranteed to be the maximum over the continuous forecast period.
-
-Automated prediction tests use mocked provider jobs and consume zero FortyGuard API credits.
-
-## Tests
-
-## Backend operational loop
-
-HeatShield now implements the human-gated backend loop:
-
-`SENSE → ASSESS → PREDICT → DECIDE → ACT → VERIFY → RECHECK`
-
-- FortyGuard supplies current environmental evidence and future TCM temperature samples.
-- **AI model provider: DeepSeek V4 Flash.** DECIDE uses non-thinking mode and permits the model to select only six server-defined, argument-free tools. Server code validates every tool call and constructs every factual action detail.
-- Every proposed ACT action requires explicit supervisor approval. ACT currently creates only auditable HeatShield internal operational state; SMS, email, calendar, and external scheduling connectors are intentionally not wired.
-- VERIFY obtains fresh FortyGuard evidence and reports before/after observations without claiming that an action caused an environmental change.
-- RECHECK creates a successor cycle from fresh provider evidence and preserves the original historical cycle.
-- SQLite stores compact cycles, decisions, actions, operational records, and audit events. It never stores API keys, chain-of-thought, or full provider FeatureCollections.
-
-Operational endpoints:
+## Key product endpoints
 
 ```text
 POST /api/risk/assess-live
 POST /api/predict/heat-outlook
 POST /api/spatial/cooler-zones
 POST /api/optimize/shift
+POST /api/site/operations-snapshot
+POST /api/site/operations-snapshot/{snapshot_id}/agent-plan
+POST /api/premium/location-intelligence
+POST /api/resilience/site-history
 POST /api/agent/decide
 POST /api/cycle/plan
 POST /api/cycle/{cycle_id}/approve
@@ -249,183 +189,55 @@ POST /api/cycle/{cycle_id}/recheck
 GET  /api/cycle/{cycle_id}/audit
 ```
 
-DeepSeek is used only for constrained tool selection. Model prose and chain-of-thought are not used or returned. Missing current evidence skips the model, while a missing/unavailable DeepSeek service leaves completed SENSE, ASSESS, and PREDICT evidence intact. Automated tests mock both providers and consume no FortyGuard or DeepSeek credits.
+Low-level FortyGuard submit/status routes are also available under `/api/fortyguard` for debugging and Swagger inspection.
 
-## SPATIAL INTELLIGENCE Phase 1
+## Demo path
 
-`POST /api/spatial/cooler-zones` requests one current FortyGuard TCM heatmap over a wider deterministic worksite AOI. HeatShield keeps only valid polygon tiles with numeric `properties.value`, identifies the site-containing reference tile, and ranks strictly cooler tiles by temperature, straight-line distance, then provider feature order.
+For the strongest hackathon walkthrough:
 
-```json
-{
-  "location": {
-    "site_id": "PHX-SITE-01",
-    "name": "Phoenix Outdoor Construction Site",
-    "city": "Phoenix",
-    "state": "Arizona",
-    "country": "United States",
-    "latitude": 33.4484,
-    "longitude": -112.074
-  },
-  "timezone_name": "America/Phoenix",
-  "search_radius_meters": 400,
-  "granularity": 60,
-  "max_candidates": 3
-}
-```
+1. Open the product and select/create a Phoenix-area worksite.
+2. Draw a realistic full site boundary.
+3. Add 2–3 workers in different parts of the polygon with different tasks/shift contexts.
+4. Review inputs and generate worker plans.
+5. Open the Decision Workbench for the highest-attention worker.
+6. Compare **Current / Better Time / Better Place**.
+7. Run the in-site spatial comparison and inspect the thermal digital twin.
+8. Select a candidate and request **Premium Context** to show satellite + street segmentation.
+9. Review bounded agent actions, authorize with a supervisor ID, then run **Verify with Fresh Evidence**.
+10. Run the historical Site Resilience panel to show repeated heat burden and persistence over the same operational polygon.
 
-The response contains sanitized polygon geometry for the future map, compact tile temperatures, the containing site reference, and deterministic cooler-zone candidates. It never uses a nearest tile as the site temperature, heatmap statistics as tile temperatures, or interpolation.
+This sequence demonstrates that the product uses FortyGuard across **current evidence, forecast, spatial intelligence, Premium imagery and historical analytics**, while keeping action selection explainable and human-controlled.
 
-**“Cooler” does not mean “safe.”** Temperature alone does not establish Heat Index, WBGT, radiant exposure, wind, accessibility, physical hazards, permissions, or task feasibility. Straight-line distance is not a walking or routing distance.
+## Tests and CI
 
-Cycle planning can opt in using:
+Backend tests:
 
-```json
-{
-  "include_spatial_intelligence": true,
-  "spatial_search_radius_meters": 400
-}
-```
-
-The default is `false`, avoiding an additional provider request. When enabled, the constrained agent may select `propose_cooler_zone_candidate`; the server selects rank 1 and constructs all coordinates, temperatures, differences, and distance. After supervisor approval, ACT stores an internal `relocation_candidate` in `approved_candidate` state. This does not claim a worker moved, the area is safe, or relocation occurred. VERIFY confirms only the internal record state; physical location verification is outside Phase 1.
-
-## SMART SHIFT OPTIMIZER — Phase 1
-
-`POST /api/optimize/shift` consumes an existing PREDICT response and generates deterministic schedules using only exact, available FortyGuard sampled start timestamps. It does not call FortyGuard or DeepSeek, interpolate missing hours, or assign tasks to unavailable samples.
-
-```json
-{
-  "worker_id": "WORKER-01",
-  "heat_outlook": {
-    "status": "available",
-    "source": "fortyguard_heatmap",
-    "location": {
-      "site_id": "PHX-SITE-01",
-      "name": "Phoenix Outdoor Construction Site",
-      "city": "Phoenix",
-      "state": "Arizona",
-      "country": "United States",
-      "latitude": 33.4484,
-      "longitude": -112.074
-    },
-    "timezone_name": "America/Phoenix",
-    "generated_at": "2026-08-18T17:00:00Z",
-    "forecast_horizon_hours": 3,
-    "sample_offsets_hours": [1, 3],
-    "points": [
-      {
-        "status": "available",
-        "offset_hours": 1,
-        "requested_local_timestamp": "2026-08-18T11:00:00-07:00",
-        "requested_utc_timestamp": "2026-08-18T18:00:00Z",
-        "temperature_c": 40,
-        "source": "fortyguard_heatmap",
-        "analytic_type": "tcm",
-        "heatmap_activity_id": "forecast-1",
-        "extraction_method": "containing_heatmap_feature_value"
-      },
-      {
-        "status": "available",
-        "offset_hours": 3,
-        "requested_local_timestamp": "2026-08-18T13:00:00-07:00",
-        "requested_utc_timestamp": "2026-08-18T20:00:00Z",
-        "temperature_c": 32,
-        "source": "fortyguard_heatmap",
-        "analytic_type": "tcm",
-        "heatmap_activity_id": "forecast-3",
-        "extraction_method": "containing_heatmap_feature_value"
-      }
-    ],
-    "summary": {
-      "available_points": 2,
-      "total_points": 2,
-      "highest_sampled_temperature_c": 40,
-      "lowest_sampled_temperature_c": 32,
-      "first_to_last_temperature_change_c": -8,
-      "trend": "falling"
-    },
-    "limitations": []
-  },
-  "tasks": [
-    {
-      "task_id": "TASK-01",
-      "task_name": "Material handling",
-      "duration_minutes": 120,
-      "current_planned_offset_hours": 1,
-      "flexible": true,
-      "allowed_offset_hours": [1, 3],
-      "workload_level": "heavy",
-      "direct_sun": true,
-      "must_follow_task_ids": []
-    }
-  ],
-  "max_alternatives": 3
-}
-```
-
-The `sampled_temperature_minutes_index` is:
-
-`sum(sampled_start_temperature_c × duration_minutes)`
-
-It is a relative scheduling/planning index—not physiological heat dose, an occupational risk score, a medical metric, WBGT exposure, or Heat Index exposure. Each temperature describes only the exact sampled task-start timestamp, not average temperature over the task duration or continuous forecast coverage.
-
-Schedules must not overlap and must satisfy fixed-task, allowed-offset, and dependency ordering constraints. Feasible plans rank by lowest planning index, then least total offset movement, then the lexicographic offset tuple. No workload or direct-sun multiplier is invented.
-
-Cycle planning can opt in with `include_shift_optimization: true` and a non-empty `shift_tasks` list. It reuses the already-created `heat_outlook`, so optimization adds no provider request. DeepSeek may select only `propose_shift_plan_candidate`; the server supplies the validated best candidate. Supervisor approval stores an internal `shift_plan_candidate` in `approved_candidate` state. It does not mutate a calendar, prove task movement, or demonstrate real-world exposure change.
-
-Tests use mocked HTTP transports and do not consume FortyGuard credits:
-
-```powershell
+```bash
 cd backend
-python -m pytest -q
+pytest -q
 ```
 
-## MULTI-WORKER SITE INTELLIGENCE — Phase 1
+Frontend quality:
 
-The supervisor snapshot path shares site-level evidence instead of multiplying provider calls by worker count:
-
-```text
-ONE shared current environment  -> MANY worker assessments
-ONE shared PREDICT outlook      -> MANY worker planning contexts
-ONE shared SPATIAL query        -> site map intelligence
-NO automatic DeepSeek fan-out
-
-Supervisor selects one worker   -> fresh individual /api/cycle/plan
-                                 -> constrained agent decision
-                                 -> human approval -> ACT -> VERIFY -> RECHECK
+```bash
+cd frontend/heatshield
+npx eslint src/api/decisionIntelligenceApi.js src/product/mobile/CrewSetupScreen.jsx src/product/mobile/DecisionComparisonStrip.jsx src/product/mobile/DecisionTwinMap.jsx src/product/mobile/DecisionWorkbench.jsx src/product/mobile/PlanMapEditor.jsx src/product/mobile/PlanScreen.jsx src/product/mobile/SiteResiliencePanel.jsx src/product/mobile/planWorkspace.js
+npm run build
 ```
 
-Endpoints:
+GitHub Actions runs the complete backend pytest suite, the focused product-slice lint gate and a complete Vite production build. Automated tests use mocked provider/model calls and do not require live FortyGuard or DeepSeek credits.
 
-- `POST /api/site/operations-snapshot` creates and stores a deterministic 1–25 worker snapshot.
-- `GET /api/site/operations-snapshot/{snapshot_id}` reloads it without provider or DeepSeek calls and reports `age_seconds`.
-- `POST /api/site/operations-snapshot/{snapshot_id}/worker/{worker_id}/cycle-request` returns a validated request for a selected worker; it does not run a cycle or treat stored evidence as fresh.
+## Evidence philosophy
 
-The POST performs exactly one shared current-environment fetch. PREDICT is invoked once but normally attempts one FortyGuard heatmap per requested forecast offset (five with the defaults). SPATIAL, when enabled, is invoked once. Shift optimization reuses the shared outlook and makes no provider calls. `provider_usage` exposes all attempted current, forecast, spatial, assessment, optimization, and DeepSeek counts; `deepseek_calls` is always zero for this endpoint.
+HeatShield follows a fail-closed rule throughout the system:
 
-Workers are grouped only by the existing provider Heat Index screening result: evidence gap, extreme danger, danger, extreme caution, caution, below caution, then screening unavailable. Worker IDs sort ascending inside each group. **Operational attention ordering is not a total occupational heat-risk score.** Workload, direct sun, acclimatization, and exposure duration remain contextual evidence; they are not assigned invented weights.
+- no fabricated provider values;
+- no nearest-tile substitution for current site temperature;
+- no interpolation of missing forecast samples;
+- no “safe time” claim from a cooler forecast sample;
+- no “safe zone” claim from a cooler spatial tile;
+- no medical-risk score invented from workload/PPE/acclimatization;
+- no unverified out-of-boundary spatial action;
+- no causal effectiveness claim from before/after observations.
 
-Stored snapshots are historical views. GET never refreshes provider data or silently declares an older snapshot invalid; clients should display `generated_at` and `age_seconds`. Selecting a worker produces a request whose later submission to `/api/cycle/plan` performs fresh SENSE/PREDICT and optional SPATIAL work.
-
-Swagger includes a Phoenix example with three assignments: heavy direct-sun roof material handling, moderate outdoor equipment inspection, and an acclimatized light gate-records task. A compact request follows:
-
-```json
-{
-  "location": {"site_id":"PHX-01","name":"Phoenix Operations Site","city":"Phoenix","state":"Arizona","latitude":33.4484,"longitude":-112.074},
-  "timezone_name": "America/Phoenix",
-  "assignments": [
-    {"display_label":"Roof crew","worker":{"worker_id":"W-001","site_id":"PHX-01","acclimatized":false},"task":{"task_id":"T-ROOF","task_name":"Roof material handling","workload_level":"heavy","exposure_duration_minutes":90,"outdoor":true,"direct_sun":true}},
-    {"display_label":"Yard inspection","worker":{"worker_id":"W-002","site_id":"PHX-01","acclimatized":true},"task":{"task_id":"T-YARD","task_name":"Outdoor equipment inspection","workload_level":"moderate","exposure_duration_minutes":60,"outdoor":true,"direct_sun":false}},
-    {"display_label":"Gate records","worker":{"worker_id":"W-003","site_id":"PHX-01","acclimatized":true},"task":{"task_id":"T-GATE","task_name":"Gate inventory records","workload_level":"light","exposure_duration_minutes":45,"outdoor":true,"direct_sun":false}}
-  ]
-}
-```
-
-## Provider schema source
-
-Request and result fields are based on the official FortyGuard documentation:
-
-- [Create Heatmap](https://docs-api.fortyguard.com/docs/create-heatmap)
-- [Environmental Parameters](https://docs-api.fortyguard.com/docs/environmental-parameters)
-- [Check Status](https://docs-api.fortyguard.com/docs/check-status)
-
-Provider responses allow unknown extra fields so additions do not break the integration. Heatmap `map_data` and `stats_data` internals, environmental sentinel values, plan-specific parameter selection, and provider failure-detail fields are deliberately preserved as raw data rather than modeled beyond the published schema.
+That constraint is intentional: the product is designed to make **real FortyGuard evidence operationally useful without overstating what the evidence proves**.
