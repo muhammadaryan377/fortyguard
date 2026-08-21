@@ -85,7 +85,8 @@ export default function PlanMapEditor({
       <div className="hs-advanced-map-status">
         {mode === "draw" ? "Boundary mode: tap around the outside edge of the full operational site." : null}
         {mode === "worker" ? `Worker placement: tap inside the site boundary to place ${activeWorker?.name || activeWorkerId || "the selected worker"}.` : null}
-        {mode === "idle" ? `${polygonPositions.length >= 3 ? "Site boundary locked" : "Site boundary incomplete"} · ${crew.filter((worker) => worker.position).length}/${crew.length} worker positions recorded.` : null}
+        {mode === "idle" && crew.length ? `${polygonPositions.length >= 3 ? "Site boundary locked" : "Site boundary incomplete"} · ${crew.filter((worker) => worker.position).length}/${crew.length} worker positions recorded.` : null}
+        {mode === "idle" && !crew.length ? (polygonPositions.length >= 3 ? "Site boundary locked as the planning area." : "Draw the full site boundary to define the planning area.") : null}
       </div>
     </div>
   );
