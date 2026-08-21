@@ -48,9 +48,12 @@ jobs:
           npx eslint
           src/api/decisionIntelligenceApi.js
           src/product/mobile/CrewSetupScreen.jsx
+          src/product/mobile/DecisionComparisonStrip.jsx
+          src/product/mobile/DecisionTwinMap.jsx
           src/product/mobile/DecisionWorkbench.jsx
           src/product/mobile/PlanMapEditor.jsx
           src/product/mobile/PlanScreen.jsx
+          src/product/mobile/SiteResiliencePanel.jsx
           src/product/mobile/planWorkspace.js
       - name: Build complete frontend
         run: npm run build
