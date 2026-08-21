@@ -42,6 +42,7 @@ function relativeTileStyle(temperature, minimum, maximum) {
 
 export default function DecisionTwinMap({
   site,
+  crew = [],
   worker,
   spatial,
   selectedCandidateId,
@@ -50,6 +51,7 @@ export default function DecisionTwinMap({
   const sitePositions = (site?.polygon || []).map((point) => [point.latitude, point.longitude]);
   const tiles = spatial?.tiles || [];
   const candidates = spatial?.candidates || [];
+  const visibleCrew = crew.length ? crew : worker ? [worker] : [];
   const temperatures = tiles
     .map((tile) => Number(tile.temperature_c))
     .filter(Number.isFinite);
@@ -61,9 +63,9 @@ export default function DecisionTwinMap({
       <div className="hs-twin-heading">
         <div>
           <span>LIVE OPERATIONAL DIGITAL TWIN</span>
-          <h3>Worker position + FortyGuard thermal tiles + in-site alternatives</h3>
+          <h3>Active crew + FortyGuard thermal tiles + in-site alternatives</h3>
         </div>
-        <small>Relative tile color is based only on temperatures returned in this scan.</small>
+        <small>Relative tile color is based only on temperatures returned in this scan; it is not a safety band.</small>
       </div>
       <div className="hs-twin-map-wrap">
         <MapContainer
@@ -90,7 +92,7 @@ export default function DecisionTwinMap({
               >
                 <Tooltip>
                   {Number.isFinite(Number(tile.temperature_c)) ? `${Number(tile.temperature_c).toFixed(1)}°C` : "temperature unavailable"}
-                  {tile.contains_site ? " · worker tile" : ""}
+                  {tile.contains_site ? " · selected worker tile" : ""}
                 </Tooltip>
               </Polygon>
             );
@@ -100,17 +102,27 @@ export default function DecisionTwinMap({
             <Polygon positions={sitePositions} pathOptions={{ color: "#0f172a", weight: 3, fillOpacity: 0.02 }} />
           ) : null}
 
-          {worker?.position ? (
-            <CircleMarker
-              center={[worker.position.latitude, worker.position.longitude]}
-              radius={10}
-              pathOptions={{ color: "#0f172a", fillColor: "#ffffff", fillOpacity: 1, weight: 4 }}
-            >
-              <Tooltip permanent direction="top" offset={[0, -10]}>
-                {worker.name || worker.workerId} · current
-              </Tooltip>
-            </CircleMarker>
-          ) : null}
+          {visibleCrew.map((member) => {
+            if (!member?.position) return null;
+            const selected = member.workerId === worker?.workerId;
+            return (
+              <CircleMarker
+                key={member.workerId}
+                center={[member.position.latitude, member.position.longitude]}
+                radius={selected ? 10 : 7}
+                pathOptions={{
+                  color: selected ? "#0f172a" : "#475569",
+                  fillColor: selected ? "#ffffff" : "#cbd5e1",
+                  fillOpacity: 1,
+                  weight: selected ? 4 : 2,
+                }}
+              >
+                <Tooltip permanent={selected} direction="top" offset={[0, -10]}>
+                  {member.name || member.workerId}{selected ? " · selected" : ""}
+                </Tooltip>
+              </CircleMarker>
+            );
+          })}
 
           {candidates.map((candidate) => {
             const selected = candidate.candidate_id === selectedCandidateId;
@@ -136,7 +148,8 @@ export default function DecisionTwinMap({
         </MapContainer>
       </div>
       <div className="hs-twin-legend">
-        <span><i className="worker" />Worker</span>
+        <span><i className="worker" />Selected worker</span>
+        <span><i className="crew" />Other active crew</span>
         <span><i className="candidate" />Cooler sampled candidate</span>
         <span><i className="boundary" />Operational boundary</span>
         <strong>{minimum === null || maximum === null ? "Thermal layer pending" : `${minimum.toFixed(1)}–${maximum.toFixed(1)}°C mapped range`}</strong>
