@@ -21,14 +21,20 @@ import { humanize } from "../productUtils.js";
 import { cToF, formatTimestamp, pointInPolygon } from "./planWorkspace.js";
 import "./DecisionWorkbench.css";
 
+function asFiniteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function fahrenheit(value) {
   const result = cToF(value);
   return result === null ? "--" : `${result}°F`;
 }
 
 function deltaF(celsiusDelta) {
-  const number = Number(celsiusDelta);
-  if (!Number.isFinite(number)) return "--";
+  const number = asFiniteNumber(celsiusDelta);
+  if (number === null) return "--";
   const converted = Math.round((number * 9) / 5 * 10) / 10;
   return `${converted > 0 ? "+" : ""}${converted}°F`;
 }
@@ -37,9 +43,9 @@ function topSegments(segments) {
   return Object.entries(segments || {})
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => {
-      const left = Number(a.value);
-      const right = Number(b.value);
-      if (Number.isFinite(left) && Number.isFinite(right)) return right - left;
+      const left = asFiniteNumber(a.value);
+      const right = asFiniteNumber(b.value);
+      if (left !== null && right !== null) return right - left;
       return a.label.localeCompare(b.label);
     })
     .slice(0, 6);
@@ -106,9 +112,9 @@ function workerDisplay(result, crew) {
 
 function actionInsideSite(action, site) {
   if (action?.action_type !== "consider_cooler_zone") return true;
-  const latitude = Number(action?.details?.centroid_latitude);
-  const longitude = Number(action?.details?.centroid_longitude);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  const latitude = asFiniteNumber(action?.details?.centroid_latitude);
+  const longitude = asFiniteNumber(action?.details?.centroid_longitude);
+  if (latitude === null || longitude === null) return false;
   return pointInPolygon({ latitude, longitude }, site?.polygon || []);
 }
 
@@ -128,13 +134,15 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
   const cycle = selectedResult?.cycle || null;
   const cycleId = cycle?.cycle_id || "";
   const currentEnvironment = cycle?.current_assessment?.environmental_evidence || {};
-  const currentTemp = Number(currentEnvironment.temperature_c);
+  const currentTemp = asFiniteNumber(currentEnvironment.temperature_c);
   const forecastPoints = (cycle?.heat_outlook?.points || []).filter(
-    (point) => point.status === "available" && Number.isFinite(Number(point.temperature_c)),
+    (point) => point.status === "available" && asFiniteNumber(point.temperature_c) !== null,
   );
   const bestFuture = useMemo(() => {
     if (!forecastPoints.length) return null;
-    return [...forecastPoints].sort((a, b) => Number(a.temperature_c) - Number(b.temperature_c))[0];
+    return [...forecastPoints].sort(
+      (a, b) => asFiniteNumber(a.temperature_c) - asFiniteNumber(b.temperature_c),
+    )[0];
   }, [forecastPoints]);
   const boundedSpatial = spatialByWorker[selectedResult?.worker_id] || null;
   const candidates = (boundedSpatial?.candidates || []).filter((candidate) => (
@@ -282,17 +290,18 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
           <div className="hs-di-time-list">
             <div className="current"><span>Now</span><strong>{fahrenheit(currentEnvironment.temperature_c)}</strong><small>worker-specific current evidence</small></div>
             {forecastPoints.map((point) => {
-              const difference = Number(point.temperature_c) - currentTemp;
+              const sampledTemp = asFiniteNumber(point.temperature_c);
+              const difference = currentTemp === null ? null : sampledTemp - currentTemp;
               return (
                 <div key={point.offset_hours} className={bestFuture?.offset_hours === point.offset_hours ? "best" : ""}>
                   <span>{formatTimestamp(point.requested_local_timestamp, site?.timezone)}</span>
                   <strong>{fahrenheit(point.temperature_c)}</strong>
-                  <small>{Number.isFinite(currentTemp) ? `${deltaF(difference)} vs now` : `+${point.offset_hours}h provider sample`}</small>
+                  <small>{currentTemp !== null ? `${deltaF(difference)} vs now` : `+${point.offset_hours}h provider sample`}</small>
                 </div>
               );
             })}
           </div>
-          {bestFuture && Number.isFinite(currentTemp) && Number(bestFuture.temperature_c) < currentTemp ? (
+          {bestFuture && currentTemp !== null && asFiniteNumber(bestFuture.temperature_c) < currentTemp ? (
             <div className="hs-di-callout"><CheckCircle2 size={16} /><span>Lowest available sample is {fahrenheit(bestFuture.temperature_c)} at {formatTimestamp(bestFuture.requested_local_timestamp, site?.timezone)}. This is a comparative timing candidate, not a safe-time claim.</span></div>
           ) : <div className="hs-di-muted">No strictly cooler future sample is available in the current provider horizon.</div>}
         </article>
