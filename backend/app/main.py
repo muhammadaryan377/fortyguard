@@ -14,6 +14,7 @@ from app.api.site import router as site_router
 from app.api.location import router as location_router
 from app.api.weather_context import router as weather_context_router
 from app.api.premium import router as premium_router
+from app.api.resilience import router as resilience_router
 from app.core.config import settings
 
 
@@ -29,7 +30,7 @@ app = FastAPI(
         "Agentic hyperlocal heat-risk intelligence "
         "for outdoor worker safety."
     ),
-    version="0.4.0",
+    version="0.5.0",
 )
 
 
@@ -60,6 +61,7 @@ app.include_router(site_router, prefix="/api")
 app.include_router(location_router, prefix="/api")
 app.include_router(weather_context_router, prefix="/api")
 app.include_router(premium_router, prefix="/api")
+app.include_router(resilience_router, prefix="/api")
 
 
 @app.get("/")
@@ -67,5 +69,5 @@ async def root():
     return {
         "project": "HeatShield AI",
         "status": "running",
-        "stage": "product_v5",
+        "stage": "product_v6",
     }
