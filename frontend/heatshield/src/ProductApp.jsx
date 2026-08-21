@@ -354,6 +354,14 @@ export default function ProductApp() {
         />
       ) : null}
       {activeTab === "plan" ? <PlanScreen {...shared} /> : null}
+      {activeTab === "checkin" ? (
+        <div className="hs-screen">
+          <section className="hs-checkin-placeholder">
+            <h2>Worker Check-in</h2>
+            <p>The navigation route is ready. We can build the full worker check-in screen next without breaking the new Home screen.</p>
+          </section>
+        </div>
+      ) : null}
       {activeTab === "team" ? <TeamScreen {...shared} /> : null}
       {activeTab === "alerts" ? <AlertsScreen {...shared} /> : null}
     </AppShell>
