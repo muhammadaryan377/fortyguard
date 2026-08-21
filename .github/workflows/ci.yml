@@ -43,10 +43,12 @@ jobs:
           cache-dependency-path: frontend/heatshield/package-lock.json
       - name: Install frontend dependencies
         run: npm ci
-      - name: Lint decision-workbench product slice
+      - name: Lint operational product slice
         run: >-
           npx eslint
           src/api/decisionIntelligenceApi.js
+          src/api/sitePlanApi.js
+          src/product/mobile/SiteSetupScreen.jsx
           src/product/mobile/CrewSetupScreen.jsx
           src/product/mobile/DecisionComparisonStrip.jsx
           src/product/mobile/DecisionTwinMap.jsx
