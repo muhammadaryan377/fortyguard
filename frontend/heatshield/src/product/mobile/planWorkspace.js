@@ -165,6 +165,7 @@ export function createWorker(crew) {
 }
 
 export function cToF(value) {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? Math.round((number * 9) / 5 + 32) : null;
 }
