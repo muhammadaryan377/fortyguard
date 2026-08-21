@@ -110,7 +110,7 @@ function guidanceForBand(band, supported, cycle, replayMode) {
   }
   if (!cycle) {
     return replayMode
-      ? "HeatShield is loading the verified FortyGuard Phoenix demo snapshot and will update this card when the evidence is ready."
+      ? "HeatShield is verifying the FortyGuard Phoenix demo snapshot. Risk values and AI recommendations will appear after provider evidence is ready."
       : "HeatShield is loading the current FortyGuard worksite scan and will update this card when the evidence is ready.";
   }
   if (["danger", "extreme_danger"].includes(band)) {
@@ -176,6 +176,7 @@ export default function TodayScreen({
 
   const locating = locationBusy && !location;
   const replayMode = Boolean(location?.analysis_datetime);
+  const awaitingVerifiedReplay = replayMode && !cycle;
   const evidenceTimestamp = replayMode
     ? formatEvidenceTimestamp(location?.analysis_datetime, location?.timezone)
     : null;
@@ -196,9 +197,15 @@ export default function TodayScreen({
       env.temperature_c ??
       env.air_temperature_c,
   );
-  const airTempF = cToF(providerTempC ?? currentWeather.temperature_2m_c);
+  const airTempF = cToF(
+    awaitingVerifiedReplay
+      ? providerTempC
+      : providerTempC ?? currentWeather.temperature_2m_c,
+  );
   const feelsLikeF = cToF(
-    env.apparent_temperature_c ?? currentWeather.apparent_temperature_c,
+    awaitingVerifiedReplay
+      ? env.apparent_temperature_c
+      : env.apparent_temperature_c ?? currentWeather.apparent_temperature_c,
   );
   const heatIndexF = cToF(env.heat_index_c);
   const humidity = finite(
@@ -249,8 +256,8 @@ export default function TodayScreen({
 
   const kicker = locating
     ? "DETECTING CURRENT LOCATION"
-    : replayMode && !cycle
-      ? "VERIFIED HEAT RISK CHECK"
+    : awaitingVerifiedReplay
+      ? "VERIFYING HEAT RISK"
       : riskTitle(band, fortyGuardSupported, cycle);
 
   const heatIndexText = locating
@@ -261,7 +268,7 @@ export default function TodayScreen({
         : `Heat index: ${rounded(heatIndexF)}°F`
       : analysisBusy
         ? replayMode
-          ? "Loading verified FortyGuard Phoenix evidence…"
+          ? "Waiting for verified FortyGuard Phoenix evidence…"
           : "FortyGuard worksite scan is running…"
         : weatherBusy
           ? "Loading current weather conditions…"
@@ -278,6 +285,30 @@ export default function TodayScreen({
   const guidance = locating
     ? "Allow location access in your browser so HeatShield can automatically load conditions for your current worksite."
     : guidanceForBand(band, fortyGuardSupported, cycle, replayMode);
+
+  const temperatureSubline = awaitingVerifiedReplay
+    ? "Awaiting FortyGuard provider evidence"
+    : `Feels like ${rounded(feelsLikeF)}°F${replayMode && cycle ? " · verified" : ""}`;
+
+  const primaryLabel = cycle
+    ? "VIEW AI RECOMMENDATION"
+    : locating
+      ? "FINDING YOUR LOCATION"
+      : analysisBusy && fortyGuardSupported
+        ? "AI RECOMMENDATION PREPARING"
+        : "WHAT SHOULD I DO?";
+
+  const primarySublabel = cycle
+    ? "Open the evidence-backed work plan"
+    : locating
+      ? "Loading local conditions automatically"
+      : fortyGuardSupported
+        ? analysisBusy
+          ? replayMode
+            ? "FortyGuard evidence → bounded AI decision"
+            : "Current evidence → bounded AI decision"
+          : "Get AI Recommendation"
+        : "View available local weather context";
 
   return (
     <div className="hs-screen hs-home-screen-v1">
@@ -298,9 +329,7 @@ export default function TodayScreen({
           <div className="hs-home-temp-row">
             <div className="hs-home-temp-copy">
               <strong>{rounded(airTempF)}<sup>°F</sup></strong>
-              <span>
-                Feels like {rounded(feelsLikeF)}°F{replayMode && cycle ? " · verified" : ""}
-              </span>
+              <span>{temperatureSubline}</span>
             </div>
             <div className="hs-home-thermometer" aria-hidden="true">
               <ThermometerSun size={35} />
@@ -391,18 +420,8 @@ export default function TodayScreen({
           {analysisBusy || locating ? <LoaderCircle className="spinner" size={21} /> : <Sparkles size={21} />}
         </span>
         <span>
-          <strong>{cycle ? "VIEW AI RECOMMENDATION" : locating ? "FINDING YOUR LOCATION" : "WHAT SHOULD I DO?"}</strong>
-          <small>
-            {cycle
-              ? "Open the evidence-backed work plan"
-              : locating
-                ? "Loading local conditions automatically"
-                : fortyGuardSupported
-                  ? analysisBusy
-                    ? replayMode ? "Building verified recommendation" : "Building current recommendation"
-                    : "Get AI Recommendation"
-                  : "View available local weather context"}
-          </small>
+          <strong>{primaryLabel}</strong>
+          <small>{primarySublabel}</small>
         </span>
         <ArrowRight size={20} />
       </button>
