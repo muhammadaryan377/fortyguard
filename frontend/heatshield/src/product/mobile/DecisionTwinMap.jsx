@@ -1,0 +1,146 @@
+import { useEffect } from "react";
+import {
+  CircleMarker,
+  MapContainer,
+  Polygon,
+  TileLayer,
+  Tooltip,
+  useMap,
+} from "react-leaflet";
+
+import { polygonCenter } from "./planWorkspace.js";
+import "./DecisionTwinMap.css";
+
+function TwinViewport({ site }) {
+  const map = useMap();
+  useEffect(() => {
+    const points = site?.polygon ?? [];
+    if (points.length >= 3) {
+      map.fitBounds(points.map((point) => [point.latitude, point.longitude]), { padding: [32, 32] });
+    } else {
+      map.setView(polygonCenter(site), 17);
+    }
+  }, [map, site]);
+  return null;
+}
+
+function relativeTileStyle(temperature, minimum, maximum) {
+  const value = Number(temperature);
+  const low = Number(minimum);
+  const high = Number(maximum);
+  const ratio = Number.isFinite(value) && Number.isFinite(low) && Number.isFinite(high) && high > low
+    ? Math.max(0, Math.min(1, (value - low) / (high - low)))
+    : 0.5;
+  const hue = 205 - ratio * 190;
+  return {
+    color: `hsl(${hue} 72% 42%)`,
+    fillColor: `hsl(${hue} 78% 50%)`,
+    fillOpacity: 0.27,
+    weight: 1.2,
+  };
+}
+
+export default function DecisionTwinMap({
+  site,
+  worker,
+  spatial,
+  selectedCandidateId,
+  onSelectCandidate,
+}) {
+  const sitePositions = (site?.polygon || []).map((point) => [point.latitude, point.longitude]);
+  const tiles = spatial?.tiles || [];
+  const candidates = spatial?.candidates || [];
+  const temperatures = tiles
+    .map((tile) => Number(tile.temperature_c))
+    .filter(Number.isFinite);
+  const minimum = temperatures.length ? Math.min(...temperatures) : null;
+  const maximum = temperatures.length ? Math.max(...temperatures) : null;
+
+  return (
+    <section className="hs-twin-shell">
+      <div className="hs-twin-heading">
+        <div>
+          <span>LIVE OPERATIONAL DIGITAL TWIN</span>
+          <h3>Worker position + FortyGuard thermal tiles + in-site alternatives</h3>
+        </div>
+        <small>Relative tile color is based only on temperatures returned in this scan.</small>
+      </div>
+      <div className="hs-twin-map-wrap">
+        <MapContainer
+          center={polygonCenter(site)}
+          zoom={17}
+          scrollWheelZoom
+          className="hs-twin-map"
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <TwinViewport site={site} />
+
+          {tiles.map((tile) => {
+            const ring = tile?.polygon_coordinates?.[0] || [];
+            if (ring.length < 4) return null;
+            const positions = ring.map((point) => [point[1], point[0]]);
+            return (
+              <Polygon
+                key={tile.tile_id}
+                positions={positions}
+                pathOptions={relativeTileStyle(tile.temperature_c, minimum, maximum)}
+              >
+                <Tooltip>
+                  {Number.isFinite(Number(tile.temperature_c)) ? `${Number(tile.temperature_c).toFixed(1)}°C` : "temperature unavailable"}
+                  {tile.contains_site ? " · worker tile" : ""}
+                </Tooltip>
+              </Polygon>
+            );
+          })}
+
+          {sitePositions.length >= 3 ? (
+            <Polygon positions={sitePositions} pathOptions={{ color: "#0f172a", weight: 3, fillOpacity: 0.02 }} />
+          ) : null}
+
+          {worker?.position ? (
+            <CircleMarker
+              center={[worker.position.latitude, worker.position.longitude]}
+              radius={10}
+              pathOptions={{ color: "#0f172a", fillColor: "#ffffff", fillOpacity: 1, weight: 4 }}
+            >
+              <Tooltip permanent direction="top" offset={[0, -10]}>
+                {worker.name || worker.workerId} · current
+              </Tooltip>
+            </CircleMarker>
+          ) : null}
+
+          {candidates.map((candidate) => {
+            const selected = candidate.candidate_id === selectedCandidateId;
+            return (
+              <CircleMarker
+                key={candidate.candidate_id}
+                center={[candidate.centroid_latitude, candidate.centroid_longitude]}
+                radius={selected ? 11 : 8}
+                pathOptions={{
+                  color: selected ? "#075985" : "#0f766e",
+                  fillColor: selected ? "#38bdf8" : "#5eead4",
+                  fillOpacity: 0.95,
+                  weight: selected ? 4 : 3,
+                }}
+                eventHandlers={{ click: () => onSelectCandidate?.(candidate.candidate_id) }}
+              >
+                <Tooltip direction="top" permanent={selected}>
+                  #{candidate.rank} · {Number(candidate.temperature_c).toFixed(1)}°C · {Math.round(candidate.straight_line_distance_m)} m
+                </Tooltip>
+              </CircleMarker>
+            );
+          })}
+        </MapContainer>
+      </div>
+      <div className="hs-twin-legend">
+        <span><i className="worker" />Worker</span>
+        <span><i className="candidate" />Cooler sampled candidate</span>
+        <span><i className="boundary" />Operational boundary</span>
+        <strong>{minimum === null || maximum === null ? "Thermal layer pending" : `${minimum.toFixed(1)}–${maximum.toFixed(1)}°C mapped range`}</strong>
+      </div>
+    </section>
+  );
+}
