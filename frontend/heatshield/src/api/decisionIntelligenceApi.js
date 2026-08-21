@@ -45,19 +45,38 @@ async function post(path, payload, timeoutMs = LONG_TIMEOUT_MS) {
   }
 }
 
-function sitePolygon(site) {
-  const points = Array.isArray(site?.polygon) ? site.polygon : [];
-  if (points.length < 3) return null;
-  const ring = points.map((point) => [Number(point.longitude), Number(point.latitude)]);
-  ring.push([...ring[0]]);
-  return {
-    type: "FeatureCollection",
-    features: [{
+function polygonFeatureCollection(polygons, properties = {}) {
+  const features = (polygons || []).map((points, index) => {
+    if (!Array.isArray(points) || points.length < 3) return null;
+    const ring = points.map((point) => [Number(point.longitude), Number(point.latitude)]);
+    ring.push([...ring[0]]);
+    return {
       type: "Feature",
-      properties: {},
+      properties: { ...properties, polygon_index: index },
       geometry: { type: "Polygon", coordinates: [ring] },
-    }],
-  };
+    };
+  }).filter(Boolean);
+  return features.length ? { type: "FeatureCollection", features } : null;
+}
+
+function sitePolygon(site) {
+  return polygonFeatureCollection([site?.polygon || []]);
+}
+
+function allowedZonePolygon(site, worker) {
+  if (!worker?.reassignAllowed) return null;
+  const allowedIds = new Set([worker.zoneId, ...(worker.allowedZoneIds || [])].filter(Boolean));
+  const zones = (site?.zones || []).filter((zone) => (
+    allowedIds.has(zone.id)
+    && zone.active
+    && zone.relocationAllowed
+    && ["work", "recovery"].includes(zone.type)
+    && zone.polygon?.length >= 3
+  ));
+  return polygonFeatureCollection(
+    zones.map((zone) => zone.polygon),
+    { boundary_role: "worker_approved_operational_zone" },
+  );
 }
 
 function siteLocation(site) {
@@ -93,7 +112,11 @@ function workerLocation(site, worker) {
 
 export async function fetchBoundedSpatialIntelligence(site, worker) {
   if (!site?.polygon?.length || !worker?.position) {
-    throw new DecisionIntelligenceError("A site polygon and exact worker position are required.");
+    throw new DecisionIntelligenceError("A master site polygon and exact worker position are required.");
+  }
+  const operationalPolygon = allowedZonePolygon(site, worker);
+  if (!operationalPolygon) {
+    throw new DecisionIntelligenceError("No supervisor-approved work/recovery zone is available for this worker.");
   }
   return post("/api/spatial/cooler-zones", {
     location: workerLocation(site, worker),
@@ -101,7 +124,7 @@ export async function fetchBoundedSpatialIntelligence(site, worker) {
     search_radius_meters: Number(site.spatialRadiusMeters || 800),
     granularity: 80,
     max_candidates: 5,
-    operational_polygon: sitePolygon(site),
+    operational_polygon: operationalPolygon,
   });
 }
 
