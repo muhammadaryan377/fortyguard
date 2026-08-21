@@ -14,6 +14,7 @@ from app.services.agent_decision import decide
 from app.services.agent_model import ModelToolCall
 from app.services.cycle_orchestrator import next_step_for_decision
 from app.services.cycle_orchestrator import CycleOrchestrator
+from app.services.live_environment import build_site_polygon
 from app.services.spatial_heat import analyze_spatial_features, create_spatial_heat, haversine_distance_m
 from app.services.state_store import InMemoryHeatShieldStateStore
 from tests.test_agent_operations import FakeAgentModel, NOW, decision_request
@@ -127,14 +128,31 @@ def test_truthful_next_step(status,count,expected): assert next_step_for_decisio
 
 
 @pytest.mark.asyncio
-async def test_spatial_agent_tool_uses_rank_one_server_evidence_and_empty_args():
-    base = decision_request(); spatial = response([square(-112.074,33.4484,40),square(-112.070,33.4484,30)])
+async def test_spatial_agent_tool_uses_rank_one_boundary_verified_server_evidence():
+    base = decision_request()
+    spatial = response(
+        [square(-112.074,33.4484,40),square(-112.070,33.4484,30)],
+        operational_polygon=build_site_polygon(33.4484, -112.074, radius_meters=800),
+    )
     req = AgentDecisionRequest(current_assessment=base.current_assessment, heat_outlook=base.heat_outlook, spatial_heat=spatial)
     result = await decide(req, model=FakeAgentModel([ModelToolCall("propose_cooler_zone_candidate","{}")]), now=NOW)
     assert result.actions[0].action_type == "consider_cooler_zone"
     assert result.actions[0].details["candidate_id"] == spatial.candidates[0].candidate_id
+    assert result.actions[0].details["inside_operational_boundary"] is True
     rejected = await decide(req, model=FakeAgentModel([ModelToolCall("propose_cooler_zone_candidate",'{"temperature_c":0}')]), now=NOW)
     assert rejected.actions == [] and rejected.tool_trace[0].status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_unverified_spatial_candidate_is_hidden_from_model_and_rejected():
+    base = decision_request()
+    spatial = response([square(-112.074,33.4484,40), square(-112.070,33.4484,30)])
+    req = AgentDecisionRequest(current_assessment=base.current_assessment, heat_outlook=base.heat_outlook, spatial_heat=spatial)
+    model = FakeAgentModel([ModelToolCall("propose_cooler_zone_candidate","{}")])
+    result = await decide(req, model=model, now=NOW)
+    assert model.evidence["spatial"]["top_candidates"] == []
+    assert result.actions == []
+    assert result.tool_trace[0].safe_reason == "spatial_candidate_not_boundary_verified"
 
 
 @pytest.mark.asyncio
@@ -161,7 +179,10 @@ async def test_cycle_spatial_runs_once_persists_and_failure_is_nonfatal(monkeypa
     async def fake_outlook(request,*,client,now): return base.heat_outlook
     async def fake_spatial(request,*,client,clock):
         calls["spatial"] += 1
-        return response([square(-112.074,33.4484,40),square(-112.070,33.4484,30)])
+        return response(
+            [square(-112.074,33.4484,40),square(-112.070,33.4484,30)],
+            operational_polygon=build_site_polygon(33.4484, -112.074, radius_meters=800),
+        )
     monkeypatch.setattr("app.services.cycle_orchestrator.get_live_environment",fake_environment)
     monkeypatch.setattr("app.services.cycle_orchestrator.create_heat_outlook",fake_outlook)
     monkeypatch.setattr("app.services.cycle_orchestrator.create_spatial_heat",fake_spatial)
@@ -172,7 +193,8 @@ async def test_cycle_spatial_runs_once_persists_and_failure_is_nonfatal(monkeypa
     planned=await orchestrator.plan(cycle_request)
     assert calls["spatial"] == 1 and planned.spatial_heat.status == "available"
     assert store.get_cycle(planned.cycle_id)["response"]["spatial_heat"]["status"] == "available"
-    assert model.evidence["spatial"]["top_candidates"][0].keys() == {"candidate_id","temperature_c","cooler_by_c","straight_line_distance_m"}
+    assert model.evidence["spatial"]["top_candidates"][0].keys() == {"candidate_id","temperature_c","cooler_by_c","straight_line_distance_m","inside_operational_boundary"}
+    assert model.evidence["spatial"]["boundary_verified_candidate_count"] == 1
 
     async def failed_spatial(request,*,client,clock): raise RuntimeError("provider detail must not leak")
     monkeypatch.setattr("app.services.cycle_orchestrator.create_spatial_heat",failed_spatial)
