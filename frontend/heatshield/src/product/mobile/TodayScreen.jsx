@@ -66,10 +66,10 @@ function riskTitle(band, supported, cycle) {
 
 function guidanceForBand(band, supported, cycle) {
   if (!supported) {
-    return "Weather context is available here. Choose a supported U.S. worksite for FortyGuard occupational heat intelligence.";
+    return "Current local weather is shown for this location. FortyGuard occupational heat intelligence is available only at supported U.S. worksites.";
   }
   if (!cycle) {
-    return "Run the FortyGuard worksite scan before starting heavy outdoor work so HeatShield can verify the current heat risk.";
+    return "HeatShield is loading the current FortyGuard worksite scan and will update this card when the evidence is ready.";
   }
   if (["danger", "extreme_danger"].includes(band)) {
     return "Avoid heavy outdoor work right now. Take a break, hydrate, and move to a cooler or shaded area.";
@@ -107,19 +107,23 @@ function lowerHeatWindow(weather) {
 }
 
 export default function TodayScreen({
+  location,
+  locationBusy,
   fortyGuardSupported,
   cycle,
   weather,
+  weatherBusy,
   analysisBusy,
   onAnalyze,
   onNavigate,
 }) {
+  const locating = locationBusy && !location;
   const env = cycle?.current_assessment?.environmental_evidence ?? {};
   const screening = cycle?.current_assessment?.screening ?? {};
   const currentWeather = weather?.current ?? {};
   const today = weather?.daily?.[0] ?? {};
   const band = screening?.band;
-  const tone = riskTone(band, fortyGuardSupported);
+  const tone = locating ? "weather" : riskTone(band, fortyGuardSupported);
 
   const providerTempC = finite(
     env.verified_temperature_c ??
@@ -156,6 +160,7 @@ export default function TodayScreen({
   const workWindow = lowerHeatWindow(weather);
 
   const handlePrimaryAction = () => {
+    if (locating) return;
     if (!fortyGuardSupported) {
       onNavigate("map");
       return;
@@ -167,13 +172,35 @@ export default function TodayScreen({
     onAnalyze();
   };
 
+  const kicker = locating
+    ? "DETECTING CURRENT LOCATION"
+    : riskTitle(band, fortyGuardSupported, cycle);
+
+  const heatIndexText = locating
+    ? "Getting your location and current conditions…"
+    : heatIndexF !== null
+      ? `Heat index: ${rounded(heatIndexF)}°F`
+      : analysisBusy
+        ? "FortyGuard worksite scan is running…"
+        : weatherBusy
+          ? "Loading current weather conditions…"
+          : cycle
+            ? "Heat index is not available in the current provider evidence."
+            : fortyGuardSupported
+              ? "Current worksite heat evidence is loading."
+              : "General weather context is shown for this location.";
+
+  const guidance = locating
+    ? "Allow location access in your browser so HeatShield can automatically load conditions for your current worksite."
+    : guidanceForBand(band, fortyGuardSupported, cycle);
+
   return (
     <div className="hs-screen hs-home-screen-v1">
       <section className={`hs-home-risk-card tone-${tone}`}>
         <div className="hs-home-risk-main">
           <div className="hs-home-risk-kicker">
-            {tone === "danger" ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
-            <span>{riskTitle(band, fortyGuardSupported, cycle)}</span>
+            {locating || analysisBusy ? <LoaderCircle className="spinner" size={15} /> : tone === "danger" ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
+            <span>{kicker}</span>
           </div>
 
           <div className="hs-home-temp-row">
@@ -186,18 +213,12 @@ export default function TodayScreen({
             </div>
           </div>
 
-          <div className="hs-home-heat-index">
-            {heatIndexF !== null
-              ? `Heat index: ${rounded(heatIndexF)}°F`
-              : cycle
-                ? "Heat index is not available in the current provider evidence."
-                : "FortyGuard risk evidence has not been scanned yet."}
-          </div>
+          <div className="hs-home-heat-index">{heatIndexText}</div>
         </div>
 
         <div className="hs-home-guidance">
           <AlertTriangle size={16} />
-          <span>{guidanceForBand(band, fortyGuardSupported, cycle)}</span>
+          <span>{guidance}</span>
         </div>
       </section>
 
@@ -223,7 +244,15 @@ export default function TodayScreen({
         <span className="hs-home-info-icon"><Leaf size={23} /></span>
         <span className="hs-home-info-copy">
           <small>{cooler ? "Nearest lower-heat area" : "Lower-heat area"}</small>
-          <strong>{coolerMiles !== null ? `${coolerMiles.toFixed(1)} mi away` : "Scan to compare nearby heat"}</strong>
+          <strong>
+            {locating
+              ? "Waiting for current location"
+              : coolerMiles !== null
+                ? `${coolerMiles.toFixed(1)} mi away`
+                : fortyGuardSupported
+                  ? analysisBusy ? "Comparing nearby heat…" : "Scan to compare nearby heat"
+                  : "Available at supported U.S. worksites"}
+          </strong>
           {coolerTempF !== null ? <em>{rounded(coolerTempF)}°F candidate</em> : null}
         </span>
         <span className="hs-home-card-link">View on Map <ArrowRight size={14} /></span>
@@ -233,7 +262,7 @@ export default function TodayScreen({
         <span className="hs-home-info-icon"><Clock3 size={23} /></span>
         <span className="hs-home-info-copy">
           <small>Lower-heat work window today</small>
-          <strong>{workWindow?.label ?? "Forecast window loading"}</strong>
+          <strong>{locating || weatherBusy ? "Loading current forecast…" : workWindow?.label ?? "Forecast window unavailable"}</strong>
           {workWindow?.tempF !== null && workWindow?.tempF !== undefined ? (
             <em>Feels like about {rounded(workWindow.tempF)}°F</em>
           ) : null}
@@ -245,26 +274,28 @@ export default function TodayScreen({
         className="hs-home-ai-cta"
         type="button"
         onClick={handlePrimaryAction}
-        disabled={analysisBusy}
+        disabled={analysisBusy || locating}
       >
         <span className="hs-home-ai-icon">
-          {analysisBusy ? <LoaderCircle className="spinner" size={21} /> : <Sparkles size={21} />}
+          {analysisBusy || locating ? <LoaderCircle className="spinner" size={21} /> : <Sparkles size={21} />}
         </span>
         <span>
-          <strong>{cycle ? "VIEW AI RECOMMENDATION" : "WHAT SHOULD I DO?"}</strong>
+          <strong>{cycle ? "VIEW AI RECOMMENDATION" : locating ? "FINDING YOUR LOCATION" : "WHAT SHOULD I DO?"}</strong>
           <small>
             {cycle
               ? "Open the evidence-backed work plan"
-              : fortyGuardSupported
-                ? "Get AI Recommendation"
-                : "Choose a supported U.S. worksite"}
+              : locating
+                ? "Loading local conditions automatically"
+                : fortyGuardSupported
+                  ? analysisBusy ? "Building current recommendation" : "Get AI Recommendation"
+                  : "View available local weather context"}
           </small>
         </span>
         <ArrowRight size={20} />
       </button>
 
       <p className="hs-home-source-note">
-        <MapPin size={13} /> FortyGuard is the primary heat-risk evidence source; weather context supplements the worksite view.
+        <MapPin size={13} /> FortyGuard is the primary heat-risk evidence source; weather context supplements the selected location.
       </p>
     </div>
   );
