@@ -13,6 +13,7 @@ import {
 
 import { createSiteAgentPlan, createSiteSnapshot } from "../../api/sitePlanApi.js";
 import { ACTION_COPY, humanize } from "../productUtils.js";
+import DecisionWorkbench from "./DecisionWorkbench.jsx";
 import PlanMapEditor from "./PlanMapEditor.jsx";
 import {
   cToF,
@@ -301,9 +302,12 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
           </div>
 
           {agentPlan?.results?.length ? (
-            <div className="hs-worker-plan-results">
-              {agentPlan.results.map((result) => <AgentWorkerResult key={result.worker_id} result={result} snapshot={snapshot} crew={crew} site={site} />)}
-            </div>
+            <>
+              <div className="hs-worker-plan-results">
+                {agentPlan.results.map((result) => <AgentWorkerResult key={result.worker_id} result={result} snapshot={snapshot} crew={crew} site={site} />)}
+              </div>
+              <DecisionWorkbench agentPlan={agentPlan} crew={crew} site={site} />
+            </>
           ) : <div className="hs-result-empty large">The site scan is ready; worker agent plans are still being prepared.</div>}
         </section>
       ) : null}
