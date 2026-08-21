@@ -22,7 +22,7 @@ import {
   pointInPolygon,
 } from "./planWorkspace.js";
 
-function AgentWorkerResult({ result, snapshot, crew }) {
+function AgentWorkerResult({ result, snapshot, crew, site }) {
   const workerId = result.worker_id;
   const cycle = result.cycle;
   const configured = crew.find((worker) => worker.workerId === workerId);
@@ -83,7 +83,7 @@ function AgentWorkerResult({ result, snapshot, crew }) {
         <div className="hs-worker-schedule-title"><Clock3 size={16} /><strong>Time-aware work schedule</strong></div>
         {schedule.length ? schedule.map((item) => (
           <div className="hs-schedule-row" key={`${item.task_id}-${item.candidate_offset_hours}`}>
-            <span>{formatTimestamp(item.sampled_local_start_timestamp)}</span>
+            <span>{formatTimestamp(item.sampled_local_start_timestamp, site?.timezone)}</span>
             <strong>{item.task_name}</strong>
             <em>{cToF(item.sampled_start_temperature_c)}°F sampled</em>
           </div>
@@ -226,7 +226,7 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
 
           {agentPlan?.results?.length ? (
             <div className="hs-worker-plan-results">
-              {agentPlan.results.map((result) => <AgentWorkerResult key={result.worker_id} result={result} snapshot={snapshot} crew={crew} />)}
+              {agentPlan.results.map((result) => <AgentWorkerResult key={result.worker_id} result={result} snapshot={snapshot} crew={crew} site={site} />)}
             </div>
           ) : <div className="hs-result-empty large">The site scan is ready; worker agent plans are still being prepared.</div>}
         </section>
