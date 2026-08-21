@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.api.risk import router as risk_router
@@ -12,6 +13,7 @@ from app.api.optimize import router as optimize_router
 from app.api.site import router as site_router
 from app.api.location import router as location_router
 from app.api.weather_context import router as weather_context_router
+from app.core.config import settings
 
 
 logging.basicConfig(
@@ -28,6 +30,22 @@ app = FastAPI(
     ),
     version="0.3.0",
 )
+
+
+cors_origins = [
+    origin.strip()
+    for origin in settings.heatshield_cors_origins.split(",")
+    if origin.strip()
+]
+
+if cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 app.include_router(router, prefix="/api")
