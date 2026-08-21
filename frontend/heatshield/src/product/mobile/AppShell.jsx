@@ -119,6 +119,7 @@ export default function AppShell({
   onDismissError,
 }) {
   const clock = useLocationClock(location);
+  const replayMode = Boolean(location?.analysis_datetime);
   const rawLocationName =
     location?.site_name ||
     location?.name ||
@@ -148,10 +149,13 @@ export default function AppShell({
           <button className="hs-location-button" type="button" onClick={() => onNavigate("map")}>
             <MapPin size={16} />
             <span>{locationName}</span>
+            {replayMode ? <em className="hs-location-demo-badge">DEMO</em> : null}
             <ChevronDown size={16} />
           </button>
           <div className="hs-location-meta">
-            {locationBusy && !location ? "Detecting current location…" : `${clock.time}  •  ${clock.date}`}
+            {locationBusy && !location
+              ? "Detecting current location…"
+              : `${replayMode ? "Live local time  •  " : ""}${clock.time}  •  ${clock.date}`}
           </div>
         </header>
 
