@@ -160,6 +160,14 @@ class FortyGuardClient:
             "/v1/env_params", request.model_dump(mode="json", exclude_none=True)
         )
 
+    async def create_satellite_segmentation(self, payload: dict[str, Any]) -> str:
+        """Submit a Premium satellite segmentation activity."""
+        return await self.submit_job("/v1/satellite", payload)
+
+    async def create_street_view_segmentation(self, payload: dict[str, Any]) -> str:
+        """Submit a Premium street-view segmentation activity."""
+        return await self.submit_job("/v1/streetview", payload)
+
 
 def normalize_heatmap_result(result: dict[str, Any]) -> HeatmapResult:
     map_data = result.get("map_data")
