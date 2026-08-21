@@ -236,6 +236,7 @@ export function createSiteSnapshotPayload(site, crew) {
     return {
       display_label: String(worker.name || worker.workerId || `Worker ${index + 1}`),
       position: { latitude, longitude, label: worker.zoneLabel || worker.position?.label || null },
+      spatial_relocation_allowed: Boolean(worker.reassignAllowed),
       allowed_zone_ids: worker.reassignAllowed ? [...new Set(worker.allowedZoneIds || [])] : [],
       worker: {
         worker_id: String(worker.workerId || `WORKER-${String(index + 1).padStart(2, "0")}`),
