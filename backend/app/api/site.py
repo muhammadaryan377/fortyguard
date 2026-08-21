@@ -45,6 +45,20 @@ def get_site_orchestrator() -> SiteOperationsOrchestrator:
     return SiteOperationsOrchestrator(get_store())
 
 
+def _snapshot_creation_age_seconds(snapshot_id: str) -> float | None:
+    """Use the real audit creation timestamp, not the rounded thermal-analysis anchor."""
+    events = get_store().get_audit(snapshot_id)
+    created = next((event for event in events if event.get("event_type") == "site_snapshot_created"), None)
+    if not created or not created.get("timestamp"):
+        return None
+    try:
+        created_at = datetime.fromisoformat(str(created["timestamp"]))
+    except ValueError:
+        return None
+    created_at = created_at.replace(tzinfo=UTC) if created_at.tzinfo is None else created_at.astimezone(UTC)
+    return max(0.0, (datetime.now(UTC) - created_at).total_seconds())
+
+
 @router.post("/operations-snapshot", response_model=SiteOperationsResponse)
 async def create_snapshot(payload: SiteOperationsRequest = Body(openapi_examples={
         "phoenix_two_workers": {"summary": "Phoenix site with two worker assignments", "value": PHOENIX_EXAMPLE}})) -> SiteOperationsResponse:
@@ -90,17 +104,14 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
     snapshot_workers = {worker.worker_id: worker for worker in snapshot.workers}
     cycle_orchestrator = CycleOrchestrator(get_store())
     semaphore = asyncio.Semaphore(AGENT_PLAN_WORKER_CONCURRENCY)
-    reuse_fresh = snapshot.age_seconds is not None and snapshot.age_seconds <= SNAPSHOT_REUSE_MAX_AGE_SECONDS
+    snapshot_age_seconds = _snapshot_creation_age_seconds(snapshot_id)
+    reuse_fresh = snapshot_age_seconds is not None and snapshot_age_seconds <= SNAPSHOT_REUSE_MAX_AGE_SECONDS
 
     async def run_worker(index: int, worker_id: str):
         helper = site_orchestrator.cycle_request(snapshot_id, worker_id)
         worker = snapshot_workers[worker_id]
         async with semaphore:
-            reused = bool(
-                reuse_fresh
-                and worker.heat_outlook is not None
-                and worker.current_assessment is not None
-            )
+            reused = bool(reuse_fresh and worker.heat_outlook is not None and worker.current_assessment is not None)
             if reused:
                 cycle = await create_snapshot_agent_cycle(
                     store=get_store(),
@@ -110,7 +121,7 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
                     spatial=worker.spatial_heat,
                     optimization=worker.shift_optimization,
                     snapshot_id=snapshot_id,
-                    generated_at=snapshot.generated_at,
+                    generated_at=datetime.now(UTC),
                 )
             else:
                 cycle = await cycle_orchestrator.plan(helper.cycle_request)
@@ -136,6 +147,7 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
             "cycle_ids": [item.cycle.cycle_id for item in results],
             "snapshot_evidence_reused_count": reused_count,
             "fresh_cycle_fallback_count": len(results) - reused_count,
+            "snapshot_age_seconds": snapshot_age_seconds,
             "snapshot_reuse_max_age_seconds": SNAPSHOT_REUSE_MAX_AGE_SECONDS,
             "worker_decision_concurrency": AGENT_PLAN_WORKER_CONCURRENCY,
         },
@@ -146,7 +158,7 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
         worker_count=len(results),
         results=results,
         limitations=[
-            f"Snapshot evidence is reused only when the site snapshot is at most {SNAPSHOT_REUSE_MAX_AGE_SECONDS} seconds old; stale/incomplete workers fall back to a fresh provider cycle.",
+            f"Snapshot evidence is reused only when the actual snapshot creation age is at most {SNAPSHOT_REUSE_MAX_AGE_SECONDS} seconds; stale/incomplete workers fall back to a fresh provider cycle.",
             "Shared site forecast maps are extracted separately at each worker coordinate; temperatures are not copied from another worker.",
             "Spatial alternatives are constrained to supervisor-configured relocation-enabled work/recovery zones.",
             "Every operational action remains human-gated. VERIFY obtains fresh provider evidence and does not rely on snapshot reuse.",
