@@ -9,6 +9,7 @@ import {
   searchLocations,
   verifyCycle,
 } from "./api/agenticApi.js";
+import { PHOENIX_LOCATION, VERIFIED_REPLAY_DATETIME } from "./api/heatshieldApi.js";
 import { fetchWeatherContext } from "./api/weatherContextApi.js";
 import { mapStateFromCycle } from "./product/productUtils.js";
 import AppShell from "./product/mobile/AppShell.jsx";
@@ -27,6 +28,15 @@ const DEFAULT_WORK = {
   ppe: "light",
   directSun: true,
   acclimatized: true,
+};
+
+const DEFAULT_DEMO_LOCATION = {
+  ...PHOENIX_LOCATION,
+  display_name: "Phoenix Central City, Phoenix, Arizona, United States",
+  location_source: "heatshield_verified_demo",
+  evidence_mode: "verified_replay",
+  analysis_datetime: VERIFIED_REPLAY_DATETIME,
+  fortyguard_supported: true,
 };
 
 function browserPosition(options = {}) {
@@ -65,11 +75,12 @@ function normalizeLocation(next) {
 export default function ProductApp() {
   const inFlight = useRef(false);
   const initialLocationStarted = useRef(false);
+  const initialLocation = useMemo(() => normalizeLocation(DEFAULT_DEMO_LOCATION), []);
   const [activeTab, setActiveTab] = useState("today");
-  const [location, setLocation] = useState(null);
-  const [query, setQuery] = useState("");
+  const [location, setLocation] = useState(initialLocation);
+  const [query, setQuery] = useState(initialLocation.display_name || initialLocation.name || "");
   const [searchResults, setSearchResults] = useState([]);
-  const [locationBusy, setLocationBusy] = useState(true);
+  const [locationBusy, setLocationBusy] = useState(false);
   const [cycle, setCycle] = useState(null);
   const [weather, setWeather] = useState(null);
   const [weatherBusy, setWeatherBusy] = useState(false);
@@ -98,6 +109,7 @@ export default function ProductApp() {
 
   const applyLocation = useCallback((next, { showMessage = true } = {}) => {
     const normalized = normalizeLocation(next);
+    const replayMode = Boolean(normalized.analysis_datetime);
     setLocation(normalized);
     setQuery(normalized.display_name || normalized.name || "");
     setSearchResults([]);
@@ -107,7 +119,9 @@ export default function ProductApp() {
     if (showMessage) {
       setMessage(
         normalized.fortyguard_supported
-          ? "Worksite selected. Loading current FortyGuard heat intelligence."
+          ? replayMode
+            ? "Phoenix demo selected. Loading verified FortyGuard heat evidence."
+            : "Worksite selected. Loading current FortyGuard heat intelligence."
           : "Location selected. Loading current weather context for this place.",
       );
     } else {
@@ -167,10 +181,17 @@ export default function ProductApp() {
     }
 
     if (inFlight.current) return null;
+    const replayMode = Boolean(target.analysis_datetime);
     inFlight.current = true;
     setAnalysisBusy(true);
     setError(null);
-    if (showMessage) setMessage("Loading current worksite heat evidence…");
+    if (showMessage) {
+      setMessage(
+        replayMode
+          ? "Loading verified FortyGuard Phoenix heat evidence…"
+          : "Loading current worksite heat evidence…",
+      );
+    }
     setApproval(null);
     setVerification(null);
 
@@ -189,6 +210,7 @@ export default function ProductApp() {
             exposure_duration_minutes: work.duration,
             direct_sun: work.directSun,
           },
+          analysisDatetime: target.analysis_datetime ?? null,
           forecastOffsetHours: [1, 3],
           includeSpatialIntelligence: true,
           spatialSearchRadiusMeters: 600,
@@ -209,7 +231,11 @@ export default function ProductApp() {
       );
 
       if (showMessage) {
-        setMessage("Current FortyGuard heat evidence and worksite recommendations are ready.");
+        setMessage(
+          replayMode
+            ? "Verified FortyGuard Phoenix evidence and recommendations are ready."
+            : "Current FortyGuard heat evidence and worksite recommendations are ready.",
+        );
       } else {
         setMessage(null);
       }
@@ -218,6 +244,7 @@ export default function ProductApp() {
     } catch (analysisError) {
       setCycle(null);
       setSelected([]);
+      setMessage(null);
       setError(analysisError?.message ?? "Heat analysis failed for this worksite.");
       return null;
     } finally {
@@ -282,8 +309,8 @@ export default function ProductApp() {
   useEffect(() => {
     if (initialLocationStarted.current) return;
     initialLocationStarted.current = true;
-    void useCurrentLocation({ stayOnToday: true, showMessage: false });
-  }, [useCurrentLocation]);
+    void runAnalysis(initialLocation, { showMessage: false });
+  }, [initialLocation, runAnalysis]);
 
   async function findLocation() {
     setLocationBusy(true);
