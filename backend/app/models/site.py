@@ -45,7 +45,31 @@ class SiteWorkerPosition(StrictModel):
     label: str | None = Field(default=None, max_length=120)
 
 
+def _point_on_segment(
+    longitude: float,
+    latitude: float,
+    first: list[float],
+    second: list[float],
+    *,
+    tolerance: float = 1e-10,
+) -> bool:
+    x1, y1 = float(first[0]), float(first[1])
+    x2, y2 = float(second[0]), float(second[1])
+    cross = (longitude - x1) * (y2 - y1) - (latitude - y1) * (x2 - x1)
+    if abs(cross) > tolerance:
+        return False
+    return (
+        min(x1, x2) - tolerance <= longitude <= max(x1, x2) + tolerance
+        and min(y1, y2) - tolerance <= latitude <= max(y1, y2) + tolerance
+    )
+
+
 def _point_in_ring(longitude: float, latitude: float, ring: list[list[float]]) -> bool:
+    if len(ring) < 3:
+        return False
+    for first, second in zip(ring, ring[1:] + ring[:1]):
+        if _point_on_segment(longitude, latitude, first, second):
+            return True
     inside = False
     j = len(ring) - 1
     for i, position in enumerate(ring):
