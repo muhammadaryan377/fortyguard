@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BatteryFull,
   Bell,
   ChevronDown,
   ClipboardList,
   Home,
+  MapPin,
   MapPinned,
-  Settings,
   Signal,
+  UserRoundCheck,
   Users,
   Wifi,
   X,
@@ -15,10 +16,10 @@ import {
 
 const TABS = [
   ["today", "Today", Home],
-  ["map", "Map", MapPinned],
   ["plan", "Plan", ClipboardList],
+  ["map", "Map", MapPinned],
+  ["checkin", "Check-in", UserRoundCheck],
   ["team", "Team", Users],
-  ["alerts", "Alerts", Bell],
 ];
 
 function BrandMark() {
@@ -31,7 +32,6 @@ function BrandMark() {
           <stop offset="1" stopColor="#ef4737" />
         </linearGradient>
       </defs>
-
       <path
         d="M32 3.5 55.5 10v19.2c0 17.1-9.2 31.2-23.5 39.1C17.7 60.4 8.5 46.3 8.5 29.2V10L32 3.5Z"
         fill="url(#hsBrandShieldGradient)"
@@ -39,13 +39,6 @@ function BrandMark() {
         strokeWidth="2.8"
         strokeLinejoin="round"
       />
-      <path
-        d="M32 8.2 51.2 13.5v15.2c0 14.7-7.4 27-19.2 34.2-11.8-7.2-19.2-19.5-19.2-34.2V13.5L32 8.2Z"
-        fill="none"
-        stroke="rgba(255,255,255,.32)"
-        strokeWidth="1"
-      />
-
       <g fill="none" stroke="white" strokeWidth="2.35" strokeLinecap="round">
         <circle cx="32" cy="31" r="7.5" />
         <path d="M32 17.3v5" />
@@ -74,16 +67,49 @@ function Brand() {
   );
 }
 
-function useStatusTime() {
-  const makeTime = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const [time, setTime] = useState(makeTime);
+function formatLocalDateTime(location) {
+  const timezone = location?.timezone || undefined;
+  const now = new Date();
+  try {
+    return {
+      time: new Intl.DateTimeFormat("en-US", {
+        timeZone: timezone,
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(now),
+      date: new Intl.DateTimeFormat("en-US", {
+        timeZone: timezone,
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }).format(now),
+    };
+  } catch {
+    return {
+      time: new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(now),
+      date: new Intl.DateTimeFormat("en-US", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }).format(now),
+    };
+  }
+}
 
+function useLocationClock(location) {
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    const timer = window.setInterval(() => setTime(makeTime()), 30_000);
+    const timer = window.setInterval(() => setTick((value) => value + 1), 30_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  return time;
+  return useMemo(
+    () => formatLocalDateTime(location),
+    [location?.timezone, tick],
+  );
 }
 
 export default function AppShell({
@@ -97,37 +123,40 @@ export default function AppShell({
   onDismissMessage,
   onDismissError,
 }) {
-  const statusTime = useStatusTime();
-  const locationName = location?.name || location?.city || "Selected worksite";
+  const clock = useLocationClock(location);
+  const rawLocationName = location?.site_name || location?.name || location?.city || "Selected worksite";
+  const locationName = rawLocationName === "Phoenix Central City" ? "Phoenix Yard" : rawLocationName;
 
   return (
     <div className="hs-page">
       <div className="hs-app-frame">
         <header className="hs-header">
-          <div className="hs-header-glow" />
           <div className="hs-phone-status" aria-hidden="true">
-            <strong>{statusTime}</strong>
-            <div><Signal size={16} /><Wifi size={17} /><BatteryFull size={20} /></div>
+            <strong>{clock.time}</strong>
+            <div><Signal size={14} /><Wifi size={15} /><BatteryFull size={18} /></div>
           </div>
 
           <div className="hs-header-row">
             <Brand />
-            <div className="hs-header-actions">
-              <button className="hs-icon-button" type="button" aria-label="Open alerts" onClick={() => onNavigate("alerts")}>
-                <Bell size={21} />
-                {cycle?.current_assessment?.screening?.band && cycle.current_assessment.screening.band !== "below_caution" ? <span className="hs-notification-dot" /> : null}
-              </button>
-              <button className="hs-icon-button" type="button" aria-label="Open preferences" onClick={() => onNavigate("alerts")}>
-                <Settings size={21} />
-              </button>
-            </div>
+            <button
+              className="hs-icon-button"
+              type="button"
+              aria-label="Open alerts"
+              onClick={() => onNavigate("alerts")}
+            >
+              <Bell size={20} />
+              {cycle?.current_assessment?.screening?.band && cycle.current_assessment.screening.band !== "below_caution" ? (
+                <span className="hs-notification-dot" />
+              ) : null}
+            </button>
           </div>
 
           <button className="hs-location-button" type="button" onClick={() => onNavigate("map")}>
-            <MapPinned size={22} />
+            <MapPin size={16} />
             <span>{locationName}</span>
-            <ChevronDown size={20} />
+            <ChevronDown size={16} />
           </button>
+          <div className="hs-location-meta">{clock.time} &nbsp;•&nbsp; {clock.date}</div>
         </header>
 
         <main className="hs-content">
@@ -154,7 +183,7 @@ export default function AppShell({
               className={activeTab === id ? "active" : ""}
               onClick={() => onNavigate(id)}
             >
-              <Icon size={23} />
+              <Icon size={21} />
               <span>{label}</span>
             </button>
           ))}
