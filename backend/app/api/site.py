@@ -16,6 +16,7 @@ from app.models.site import (
 )
 from app.services.cycle_orchestrator import CycleOrchestrator
 from app.services.site_operations import SiteOperationsOrchestrator
+from app.services.spatial_context import operational_polygon_context
 
 router = APIRouter(prefix="/site", tags=["Multi-worker site intelligence"])
 
@@ -108,7 +109,11 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
                 cycle_request = cycle_request.model_copy(
                     update={"operational_polygon": snapshot.site_polygon}
                 )
-            cycle = await cycle_orchestrator.plan(cycle_request)
+            token = operational_polygon_context.set(cycle_request.operational_polygon)
+            try:
+                cycle = await cycle_orchestrator.plan(cycle_request)
+            finally:
+                operational_polygon_context.reset(token)
             results.append(SiteWorkerAgentResult(worker_id=worker_id, cycle=cycle))
     except Exception as exc:
         raise _provider_error(exc) from exc
