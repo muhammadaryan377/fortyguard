@@ -18,8 +18,12 @@ import {
   fetchPremiumCandidateIntelligence,
 } from "../../api/decisionIntelligenceApi.js";
 import { humanize } from "../productUtils.js";
+import DecisionComparisonStrip from "./DecisionComparisonStrip.jsx";
+import DecisionTwinMap from "./DecisionTwinMap.jsx";
+import SiteResiliencePanel from "./SiteResiliencePanel.jsx";
 import { cToF, formatTimestamp, pointInPolygon } from "./planWorkspace.js";
 import "./DecisionWorkbench.css";
+import "./DecisionWorkbenchV2.css";
 
 function asFiniteNumber(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -118,10 +122,19 @@ function actionInsideSite(action, site) {
   return pointInPolygon({ latitude, longitude }, site?.polygon || []);
 }
 
+function candidateInsideSite(candidate, site) {
+  return candidate?.inside_operational_boundary !== false
+    && pointInPolygon(
+      { latitude: candidate?.centroid_latitude, longitude: candidate?.centroid_longitude },
+      site?.polygon || [],
+    );
+}
+
 export default function DecisionWorkbench({ agentPlan, crew, site }) {
   const results = agentPlan?.results || [];
   const [selectedWorkerId, setSelectedWorkerId] = useState(results[0]?.worker_id || "");
   const [spatialByWorker, setSpatialByWorker] = useState({});
+  const [selectedCandidateByWorker, setSelectedCandidateByWorker] = useState({});
   const [premiumByCandidate, setPremiumByCandidate] = useState({});
   const [supervisorId, setSupervisorId] = useState("");
   const [approvalByCycle, setApprovalByCycle] = useState({});
@@ -144,14 +157,17 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
       (a, b) => asFiniteNumber(a.temperature_c) - asFiniteNumber(b.temperature_c),
     )[0];
   }, [forecastPoints]);
+  const coolerFuture = bestFuture
+    && currentTemp !== null
+    && asFiniteNumber(bestFuture.temperature_c) < currentTemp
+    ? bestFuture
+    : null;
   const boundedSpatial = spatialByWorker[selectedResult?.worker_id] || null;
-  const candidates = (boundedSpatial?.candidates || []).filter((candidate) => (
-    candidate.inside_operational_boundary !== false
-    && pointInPolygon(
-      { latitude: candidate.centroid_latitude, longitude: candidate.centroid_longitude },
-      site?.polygon || [],
-    )
-  ));
+  const candidates = (boundedSpatial?.candidates || []).filter((candidate) => candidateInsideSite(candidate, site));
+  const requestedCandidateId = selectedCandidateByWorker[selectedResult?.worker_id];
+  const selectedCandidate = candidates.find((candidate) => candidate.candidate_id === requestedCandidateId)
+    || candidates[0]
+    || null;
   const actions = cycle?.agent_decision?.actions || [];
   const approvableActions = actions.filter((action) => action.status === "proposed" && actionInsideSite(action, site));
   const blockedSpatialActions = actions.filter(
@@ -161,6 +177,13 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
   const verification = verificationByCycle[cycleId] || null;
 
   if (!selectedResult || !cycle) return null;
+
+  function selectCandidate(candidateId) {
+    setSelectedCandidateByWorker((current) => ({
+      ...current,
+      [selectedResult.worker_id]: candidateId,
+    }));
+  }
 
   async function runBoundedSpatial() {
     if (!worker?.position) {
@@ -172,6 +195,8 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
     try {
       const result = await fetchBoundedSpatialIntelligence(site, worker);
       setSpatialByWorker((current) => ({ ...current, [selectedResult.worker_id]: result }));
+      const first = (result?.candidates || []).find((candidate) => candidateInsideSite(candidate, site));
+      if (first) selectCandidate(first.candidate_id);
     } catch (nextError) {
       setError(nextError?.message || "The site-bounded spatial comparison failed.");
     } finally {
@@ -180,6 +205,7 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
   }
 
   async function inspectCandidate(candidate) {
+    selectCandidate(candidate.candidate_id);
     const key = `${selectedResult.worker_id}:${candidate.candidate_id}`;
     setError(null);
     setBusyKey(`premium:${key}`);
@@ -281,6 +307,21 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
         </article>
       </div>
 
+      <DecisionComparisonStrip
+        currentTemp={currentTemp}
+        bestFuture={coolerFuture}
+        selectedCandidate={selectedCandidate}
+        site={site}
+      />
+
+      <DecisionTwinMap
+        site={site}
+        worker={worker}
+        spatial={boundedSpatial}
+        selectedCandidateId={selectedCandidate?.candidate_id || null}
+        onSelectCandidate={selectCandidate}
+      />
+
       <div className="hs-di-compare-grid">
         <article className="hs-di-panel">
           <div className="hs-di-panel-head">
@@ -293,7 +334,7 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
               const sampledTemp = asFiniteNumber(point.temperature_c);
               const difference = currentTemp === null ? null : sampledTemp - currentTemp;
               return (
-                <div key={point.offset_hours} className={bestFuture?.offset_hours === point.offset_hours ? "best" : ""}>
+                <div key={point.offset_hours} className={coolerFuture?.offset_hours === point.offset_hours ? "best" : ""}>
                   <span>{formatTimestamp(point.requested_local_timestamp, site?.timezone)}</span>
                   <strong>{fahrenheit(point.temperature_c)}</strong>
                   <small>{currentTemp !== null ? `${deltaF(difference)} vs now` : `+${point.offset_hours}h provider sample`}</small>
@@ -301,8 +342,8 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
               );
             })}
           </div>
-          {bestFuture && currentTemp !== null && asFiniteNumber(bestFuture.temperature_c) < currentTemp ? (
-            <div className="hs-di-callout"><CheckCircle2 size={16} /><span>Lowest available sample is {fahrenheit(bestFuture.temperature_c)} at {formatTimestamp(bestFuture.requested_local_timestamp, site?.timezone)}. This is a comparative timing candidate, not a safe-time claim.</span></div>
+          {coolerFuture ? (
+            <div className="hs-di-callout"><CheckCircle2 size={16} /><span>Lowest available sample is {fahrenheit(coolerFuture.temperature_c)} at {formatTimestamp(coolerFuture.requested_local_timestamp, site?.timezone)}. This is a comparative timing candidate, not a safe-time claim.</span></div>
           ) : <div className="hs-di-muted">No strictly cooler future sample is available in the current provider horizon.</div>}
         </article>
 
@@ -326,15 +367,19 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
               {candidates.map((candidate) => {
                 const key = `${selectedResult.worker_id}:${candidate.candidate_id}`;
                 const premium = premiumByCandidate[key];
+                const selected = candidate.candidate_id === selectedCandidate?.candidate_id;
                 return (
-                  <div className="hs-di-candidate" key={candidate.candidate_id}>
+                  <div className={`hs-di-candidate${selected ? " selected" : ""}`} key={candidate.candidate_id}>
                     <div className="hs-di-candidate-main">
-                      <span>#{candidate.rank} · INSIDE SITE BOUNDARY</span>
+                      <span>#{candidate.rank} · INSIDE SITE BOUNDARY{selected ? " · SELECTED" : ""}</span>
                       <strong>{fahrenheit(candidate.temperature_c)}</strong>
                       <small>{deltaF(-candidate.cooler_by_c)} vs worker tile · {Math.round(candidate.straight_line_distance_m)} m straight-line</small>
                     </div>
                     <div className="hs-di-candidate-actions">
                       <code>{Number(candidate.centroid_latitude).toFixed(5)}, {Number(candidate.centroid_longitude).toFixed(5)}</code>
+                      <button className="select" type="button" onClick={() => selectCandidate(candidate.candidate_id)}>
+                        <MapPin size={15} />{selected ? "SELECTED" : "COMPARE"}
+                      </button>
                       <button type="button" onClick={() => inspectCandidate(candidate)} disabled={busyKey === `premium:${key}`}>
                         {busyKey === `premium:${key}` ? <Loader2 className="spin" size={15} /> : <Eye size={15} />}
                         {premium ? "REFRESH PREMIUM CONTEXT" : "INSPECT PREMIUM CONTEXT"}
@@ -412,6 +457,8 @@ export default function DecisionWorkbench({ agentPlan, crew, site }) {
           </div>
         ) : null}
       </article>
+
+      <SiteResiliencePanel site={site} />
     </section>
   );
 }
