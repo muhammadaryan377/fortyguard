@@ -92,6 +92,7 @@ class SiteWorkerAssignment(StrictModel):
     position: SiteWorkerPosition | None = None
     shift_tasks: list[ShiftTaskPlan] | None = Field(default=None, min_length=1, max_length=6)
     display_label: str | None = Field(default=None, max_length=100)
+    spatial_relocation_allowed: bool = True
     allowed_zone_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("allowed_zone_ids")
@@ -105,6 +106,8 @@ class SiteWorkerAssignment(StrictModel):
     def valid_shift_tasks(self) -> "SiteWorkerAssignment":
         if self.shift_tasks:
             validate_task_dependencies(self.shift_tasks)
+        if not self.spatial_relocation_allowed and self.allowed_zone_ids:
+            raise ValueError("allowed_zone_ids require spatial_relocation_allowed=true")
         return self
 
 
@@ -194,6 +197,7 @@ class SiteWorkerSnapshot(BaseModel):
     zone_id: str | None = None
     zone_name: str | None = None
     zone_type: SiteZoneType | None = None
+    spatial_relocation_allowed: bool = True
     allowed_zone_ids: list[str] = Field(default_factory=list)
     task_id: str
     task_name: str
