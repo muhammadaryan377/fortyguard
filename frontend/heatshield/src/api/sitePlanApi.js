@@ -103,17 +103,31 @@ function closeRing(points) {
   return ring;
 }
 
-function centroid(points) {
-  const usable = points.filter((point) => Number.isFinite(Number(point.latitude)) && Number.isFinite(Number(point.longitude)));
-  if (!usable.length) return null;
-  return {
-    latitude: usable.reduce((sum, point) => sum + Number(point.latitude), 0) / usable.length,
-    longitude: usable.reduce((sum, point) => sum + Number(point.longitude), 0) / usable.length,
-  };
-}
-
 function taskId(workerId, suffix) {
   return `${String(workerId).replace(/[^A-Za-z0-9_-]/g, "-")}-${suffix}`.slice(0, 100);
+}
+
+function siteDate(site) {
+  const source = site?.analysis_datetime ? new Date(site.analysis_datetime) : new Date();
+  const date = Number.isNaN(source.getTime()) ? new Date() : source;
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: site?.timezone || "America/Phoenix",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]),
+    );
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function localDateTime(site, time) {
+  const value = String(time || "").trim();
+  return /^\d{2}:\d{2}$/.test(value) ? `${siteDate(site)}T${value}:00` : null;
 }
 
 function shiftTasks(worker) {
@@ -159,8 +173,12 @@ export function createSiteSnapshotPayload(site, crew) {
     });
   }
 
-  const center = centroid(site.polygon);
-  if (!center) throw new SitePlanApiError("The selected site boundary is invalid.");
+  const firstWorkerPoint = crew.find((worker) => (
+    Number.isFinite(Number(worker?.position?.latitude))
+    && Number.isFinite(Number(worker?.position?.longitude))
+  ))?.position;
+  if (!firstWorkerPoint) throw new SitePlanApiError("At least one exact worker position is required.");
+
   const siteId = String(site.id || site.site_id || "WORKSITE");
   const assignments = crew.map((worker, index) => {
     const latitude = Number(worker?.position?.latitude);
@@ -168,6 +186,8 @@ export function createSiteSnapshotPayload(site, crew) {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       throw new SitePlanApiError(`${worker.name || `Worker ${index + 1}`} needs an exact map position.`);
     }
+    const shiftStart = localDateTime(site, worker.shiftStart);
+    const shiftEnd = localDateTime(site, worker.shiftEnd);
     return {
       display_label: String(worker.name || worker.workerId || `Worker ${index + 1}`),
       position: {
@@ -181,6 +201,9 @@ export function createSiteSnapshotPayload(site, crew) {
         zone_id: String(worker.zoneId || worker.zoneLabel || `ZONE-${index + 1}`).slice(0, 100),
         acclimatized: Boolean(worker.acclimatized),
         ppe_level: normalizePpe(worker.ppe),
+        clothing_factor: Math.max(0, Number(worker.clothingFactor || 0)),
+        shift_start: shiftStart,
+        shift_end: shiftEnd,
       },
       task: {
         task_id: taskId(worker.workerId || `WORKER-${index + 1}`, "NOW"),
@@ -201,8 +224,8 @@ export function createSiteSnapshotPayload(site, crew) {
       city: String(site.city || "Phoenix"),
       state: String(site.state || "Arizona"),
       country: "United States",
-      latitude: center.latitude,
-      longitude: center.longitude,
+      latitude: Number(firstWorkerPoint.latitude),
+      longitude: Number(firstWorkerPoint.longitude),
     },
     timezone_name: String(site.timezone || "America/Phoenix"),
     site_polygon: {
