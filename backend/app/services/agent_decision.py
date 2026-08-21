@@ -18,6 +18,7 @@ LIMITATIONS = [
     "The model selects only server-defined, deterministic-eligible tools and never creates environmental facts.",
     "Every proposed action requires explicit human approval before execution.",
     "A cooler sampled period or spatial tile is comparative provider evidence, not a safe-time or safe-zone claim.",
+    "Spatial relocation candidates are actionable only when their centroids are explicitly verified inside the submitted operational boundary.",
     "Wet-bulb temperature is not WBGT and is never evaluated as WBGT.",
     "VERIFY observes fresh evidence but does not prove action causality.",
     "The direct agent endpoint validates typed evidence but does not independently prove its provenance. Use the HeatShield cycle/site orchestration paths when provider-fetched evidence integrity is required.",
@@ -51,9 +52,16 @@ GUARDRAILS = [
     "Only deterministic-eligible tools are exposed to the model.",
     "Every model tool call is revalidated after selection.",
     "The model cannot invent temperatures, thresholds, coordinates, schedules, or worker facts.",
+    "Spatial actions require an explicitly boundary-verified provider candidate.",
     "At most three operational actions plus supervisor review are accepted.",
     "ACT remains human-gated and creates auditable internal operational state.",
 ]
+
+
+def _boundary_verified_candidates(spatial):
+    if spatial is None or spatial.status != "available":
+        return []
+    return [candidate for candidate in spatial.candidates if candidate.inside_operational_boundary is True]
 
 
 def build_agent_evidence(request: AgentDecisionRequest) -> AgentEvidence:
@@ -81,11 +89,14 @@ def build_agent_evidence(request: AgentDecisionRequest) -> AgentEvidence:
                 **o.summary.model_dump(mode="json", exclude={"available_points", "total_points"})}
     spatial = None
     if request.spatial_heat is not None:
+        verified_candidates = _boundary_verified_candidates(request.spatial_heat)
         spatial = {"spatial_status": request.spatial_heat.status,
                    "site_temperature_c": request.spatial_heat.site_reference.site_temperature_c,
+                   "boundary_verified_candidate_count": len(verified_candidates),
                    "top_candidates": [{"candidate_id": c.candidate_id, "temperature_c": c.temperature_c,
-                                       "cooler_by_c": c.cooler_by_c, "straight_line_distance_m": c.straight_line_distance_m}
-                                      for c in request.spatial_heat.candidates]}
+                                       "cooler_by_c": c.cooler_by_c, "straight_line_distance_m": c.straight_line_distance_m,
+                                       "inside_operational_boundary": True}
+                                      for c in verified_candidates]}
     optimization = None
     if request.shift_optimization is not None:
         best = request.shift_optimization.best_candidate
@@ -123,13 +134,16 @@ def _eligibility(tool: str, evidence: AgentEvidence, spatial=None, optimization=
         return True, "provider_backed_cooler_sample", {**chosen, "current_temperature_c": now,
                                                         "difference_from_current_c": chosen["temperature_c"] - now}
     if tool == "propose_cooler_zone_candidate":
-        candidates = spatial.candidates if spatial is not None and spatial.status == "available" else []
-        if not candidates: return False, "spatial_candidate_unavailable", {}
+        candidates = _boundary_verified_candidates(spatial)
+        if not candidates:
+            reason = "spatial_candidate_not_boundary_verified" if spatial is not None and spatial.candidates else "spatial_candidate_unavailable"
+            return False, reason, {}
         x = sorted(candidates, key=lambda item: item.rank)[0]
-        return True, "provider_backed_cooler_zone_candidate", {
+        return True, "provider_backed_boundary_verified_cooler_zone_candidate", {
             "candidate_id": x.candidate_id, "temperature_c": x.temperature_c, "cooler_by_c": x.cooler_by_c,
             "centroid_latitude": x.centroid_latitude, "centroid_longitude": x.centroid_longitude,
-            "straight_line_distance_m": x.straight_line_distance_m, "label": "cooler zone candidate"}
+            "straight_line_distance_m": x.straight_line_distance_m,
+            "inside_operational_boundary": True, "label": "boundary-verified cooler zone candidate"}
     if tool == "propose_shift_plan_candidate":
         best = optimization.best_candidate if optimization is not None else None
         if best is None: return False, "shift_plan_candidate_unavailable", {}
