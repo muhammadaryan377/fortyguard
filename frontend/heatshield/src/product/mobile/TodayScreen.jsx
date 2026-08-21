@@ -1,19 +1,18 @@
 import {
   AlertTriangle,
   ArrowRight,
-  ClipboardList,
+  Clock3,
   Droplets,
+  Leaf,
   LoaderCircle,
-  MapPinned,
+  MapPin,
   ShieldAlert,
-  ShieldCheck,
+  Sparkles,
   SunMedium,
-  Sunrise,
-  Sunset,
-  Users,
+  ThermometerSun,
   Wind,
 } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+
 import { BAND_LABEL, finite } from "../productUtils.js";
 
 function cToF(value) {
@@ -40,231 +39,232 @@ function timeParts(value) {
   return { hour, minute: Number(minuteText) || 0 };
 }
 
-function formatTime(value, includeMinutes = true) {
+function formatTime(value) {
   const parts = timeParts(value);
   if (!parts) return "--";
   const period = parts.hour >= 12 ? "PM" : "AM";
   const hour12 = parts.hour % 12 || 12;
-  if (!includeMinutes || parts.minute === 0) return `${hour12} ${period}`;
-  return `${hour12}:${String(parts.minute).padStart(2, "0")} ${period}`;
+  const minute = parts.minute ? `:${String(parts.minute).padStart(2, "0")}` : "";
+  return `${hour12}${minute} ${period}`;
 }
 
-function peakWindowLabel(hourly) {
-  const usable = (hourly ?? [])
-    .slice(0, 10)
-    .map((item, index) => ({ index, item, temp: finite(item.temperature_2m_c) }))
-    .filter((item) => item.temp !== null);
-
-  if (!usable.length) return "Peak window loading";
-  const peak = usable.reduce((best, item) => (item.temp > best.temp ? item : best), usable[0]);
-  const source = (hourly ?? []).slice(0, 10);
-  const start = source[Math.max(0, peak.index - 1)];
-  const end = source[Math.min(source.length - 1, peak.index + 2)];
-  const startText = formatTime(start?.local_time, false);
-  const endText = formatTime(end?.local_time, false);
-  return startText === endText ? `Peak heat around ${startText}` : `Peak heat expected ${startText}–${endText}`;
+function riskTone(band, supported) {
+  if (!supported) return "weather";
+  if (["danger", "extreme_danger"].includes(band)) return "danger";
+  if (["caution", "extreme_caution"].includes(band)) return "caution";
+  if (band === "below_caution") return "lower";
+  return "pending";
 }
 
-function attentionCount(work, cycle) {
-  let count = 0;
-  if (!work?.acclimatized) count += 1;
-  if (["heavy", "very_heavy"].includes(work?.workload)) count += 1;
-  if (
-    work?.directSun &&
-    cycle?.current_assessment?.screening?.band &&
-    cycle.current_assessment.screening.band !== "below_caution"
-  ) {
-    count += 1;
+function riskTitle(band, supported, cycle) {
+  if (!supported) return "WEATHER CONTEXT";
+  if (!cycle) return "HEAT RISK CHECK";
+  if (band === "extreme_danger") return "EXTREME HEAT RISK";
+  if (band === "danger") return "HIGH HEAT RISK";
+  return String(BAND_LABEL[band] ?? "HEAT RISK").toUpperCase();
+}
+
+function guidanceForBand(band, supported, cycle) {
+  if (!supported) {
+    return "Weather context is available here. Choose a supported U.S. worksite for FortyGuard occupational heat intelligence.";
   }
-  return count;
+  if (!cycle) {
+    return "Run the FortyGuard worksite scan before starting heavy outdoor work so HeatShield can verify the current heat risk.";
+  }
+  if (["danger", "extreme_danger"].includes(band)) {
+    return "Avoid heavy outdoor work right now. Take a break, hydrate, and move to a cooler or shaded area.";
+  }
+  if (["caution", "extreme_caution"].includes(band)) {
+    return "Reduce intensity, schedule frequent recovery breaks, hydrate often, and watch for heat symptoms.";
+  }
+  return "Conditions are currently lower risk. Keep hydration, shade, and normal heat-safety controls in place.";
 }
 
-function riskClass(band) {
-  if (["danger", "extreme_danger"].includes(band)) return "is-danger";
-  if (["caution", "extreme_caution"].includes(band)) return "is-caution";
-  if (band === "below_caution") return "is-lower";
-  return "is-awaiting";
+function uvLabel(value) {
+  const uv = finite(value);
+  if (uv === null) return "--";
+  if (uv >= 11) return `${Math.round(uv)} (Extreme)`;
+  if (uv >= 8) return `${Math.round(uv)} (High)`;
+  if (uv >= 6) return `${Math.round(uv)} (High)`;
+  if (uv >= 3) return `${Math.round(uv)} (Moderate)`;
+  return `${Math.round(uv)} (Low)`;
 }
 
-function TimelineCard({ weather }) {
-  const hourly = (weather?.hourly ?? []).slice(0, 7);
-  const chartData = hourly
-    .map((item, index) => ({
-      label: index === 0 ? "Now" : formatTime(item.local_time, false),
-      temp: cToF(item.temperature_2m_c),
+function lowerHeatWindow(weather) {
+  const rows = (weather?.hourly ?? []).slice(1, 8)
+    .map((item) => ({
+      ...item,
+      score: finite(item.apparent_temperature_c ?? item.temperature_2m_c),
     }))
-    .filter((item) => item.temp !== null);
+    .filter((item) => item.score !== null);
 
-  return (
-    <article className="hs-feature-card hs-timeline-card">
-      <div className="hs-timeline-heading">Today’s heat timeline</div>
-      <div className="hs-mini-chart">
-        {chartData.length > 1 ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 4, left: 4, bottom: 0 }}>
-              <defs>
-                <linearGradient id="hsTodayHeatGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#ff7043" stopOpacity={0.34} />
-                  <stop offset="100%" stopColor="#ffb55f" stopOpacity={0.03} />
-                </linearGradient>
-              </defs>
-              <XAxis
-                dataKey="label"
-                axisLine={false}
-                tickLine={false}
-                interval="preserveStartEnd"
-                tick={{ fontSize: 10, fill: "#405970" }}
-              />
-              <Tooltip formatter={(value) => [`${Math.round(Number(value))}°F`, "Air temperature"]} />
-              <Area
-                dataKey="temp"
-                type="monotone"
-                stroke="#ff6b35"
-                strokeWidth={2.6}
-                fill="url(#hsTodayHeatGradient)"
-                dot={{ r: 4, strokeWidth: 2, stroke: "#ffffff", fill: "#ff8a30" }}
-                activeDot={{ r: 5, strokeWidth: 2, stroke: "#ffffff", fill: "#ef4c38" }}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="hs-empty-mini">Hourly weather will appear when available.</div>
-        )}
-      </div>
-      <div className="hs-timeline-legend" aria-label="Heat timeline legend">
-        <span><i className="lower" />Lower</span>
-        <span><i className="caution" />Caution</span>
-        <span><i className="extreme" />Higher heat</span>
-      </div>
-    </article>
-  );
+  if (!rows.length) return null;
+  const best = rows.reduce((candidate, item) => (item.score < candidate.score ? item : candidate), rows[0]);
+  return {
+    label: `After ${formatTime(best.local_time)}`,
+    tempF: cToF(best.apparent_temperature_c ?? best.temperature_2m_c),
+  };
 }
 
 export default function TodayScreen({
-  location,
   fortyGuardSupported,
   cycle,
   weather,
-  work,
   analysisBusy,
   onAnalyze,
   onNavigate,
 }) {
-  const env = cycle?.current_assessment?.environmental_evidence;
-  const screening = cycle?.current_assessment?.screening;
+  const env = cycle?.current_assessment?.environmental_evidence ?? {};
+  const screening = cycle?.current_assessment?.screening ?? {};
   const currentWeather = weather?.current ?? {};
   const today = weather?.daily?.[0] ?? {};
   const band = screening?.band;
+  const tone = riskTone(band, fortyGuardSupported);
 
-  const airTempF = cToF(currentWeather.temperature_2m_c);
-  const feelsLikeF = cToF(currentWeather.apparent_temperature_c);
-  const heatIndexF = cToF(env?.heat_index_c);
-  const humidity = finite(currentWeather.relative_humidity_percent ?? env?.relative_humidity);
+  const providerTempC = finite(
+    env.verified_temperature_c ??
+      env.temperature_c ??
+      env.air_temperature_c,
+  );
+  const airTempF = cToF(providerTempC ?? currentWeather.temperature_2m_c);
+  const feelsLikeF = cToF(
+    env.apparent_temperature_c ?? currentWeather.apparent_temperature_c,
+  );
+  const heatIndexF = cToF(env.heat_index_c);
+  const humidity = finite(
+    env.relative_humidity_percent ??
+      env.relative_humidity ??
+      currentWeather.relative_humidity_percent,
+  );
   const windMph = kmhToMph(currentWeather.wind_speed_kmh);
-  const cooler = cycle?.spatial_heat?.candidates?.[0];
-  const attention = attentionCount(work, cycle);
-  const workerAttention = attention > 0 ? 1 : 0;
-  const bandLabel = fortyGuardSupported
-    ? BAND_LABEL[band] ?? "Heat check needed"
-    : "Weather context";
-  const coolerMiles = cooler ? cooler.straight_line_distance_m / 1609.344 : null;
+  const uv = finite(
+    weather?.air_quality?.uv_index ??
+      weather?.hourly?.[0]?.uv_index ??
+      today.uv_index_max,
+  );
+
+  const cooler = cycle?.spatial_heat?.candidates?.[0] ?? null;
+  const coolerMiles = cooler ? finite(cooler.straight_line_distance_m) / 1609.344 : null;
+  const coolerTempF = cooler
+    ? cToF(
+        cooler.temperature_c ??
+          cooler.verified_temperature_c ??
+          cooler.average_temperature_c,
+      )
+    : null;
+  const workWindow = lowerHeatWindow(weather);
+
+  const handlePrimaryAction = () => {
+    if (!fortyGuardSupported) {
+      onNavigate("map");
+      return;
+    }
+    if (cycle) {
+      onNavigate("plan");
+      return;
+    }
+    onAnalyze();
+  };
 
   return (
-    <div className="hs-screen hs-today-screen">
-      <section className="hs-hero-card">
-        <div className="hs-hero-main">
-          <div className="hs-big-temp" title="Open-Meteo air temperature at 2 m">
-            <strong>{rounded(airTempF)}<sup>°F</sup></strong>
-            <span>Feels like {rounded(feelsLikeF)}°</span>
+    <div className="hs-screen hs-home-screen-v1">
+      <section className={`hs-home-risk-card tone-${tone}`}>
+        <div className="hs-home-risk-main">
+          <div className="hs-home-risk-kicker">
+            {tone === "danger" ? <AlertTriangle size={15} /> : <ShieldAlert size={15} />}
+            <span>{riskTitle(band, fortyGuardSupported, cycle)}</span>
           </div>
 
-          <div className={`hs-risk-pill ${fortyGuardSupported ? riskClass(band) : "is-awaiting"}`}>
-            {fortyGuardSupported ? <AlertTriangle size={30} strokeWidth={2.4} /> : <ShieldAlert size={30} strokeWidth={2.2} />}
-            <div>
-              <strong>{bandLabel}</strong>
-              <span>
-                {!fortyGuardSupported
-                  ? "FortyGuard heat intelligence is not available at this location"
-                  : cycle
-                    ? `Heat index: ${rounded(heatIndexF)}°F`
-                    : "Run the worksite heat check"}
-              </span>
+          <div className="hs-home-temp-row">
+            <div className="hs-home-temp-copy">
+              <strong>{rounded(airTempF)}<sup>°F</sup></strong>
+              <span>Feels like {rounded(feelsLikeF)}°F</span>
+            </div>
+            <div className="hs-home-thermometer" aria-hidden="true">
+              <ThermometerSun size={35} />
             </div>
           </div>
+
+          <div className="hs-home-heat-index">
+            {heatIndexF !== null
+              ? `Heat index: ${rounded(heatIndexF)}°F`
+              : cycle
+                ? "Heat index is not available in the current provider evidence."
+                : "FortyGuard risk evidence has not been scanned yet."}
+          </div>
         </div>
 
-        <div className="hs-peak-line">
-          <SunMedium size={27} />
-          <strong>{peakWindowLabel(weather?.hourly)}</strong>
-        </div>
-
-        <div className="hs-hero-stats">
-          <div><Droplets size={25} /><strong>{rounded(humidity)}%</strong><span>Humidity</span></div>
-          <div><Wind size={25} /><strong>{rounded(windMph)} mph</strong><span>Wind</span></div>
-          <div><Sunrise size={25} /><strong>{formatTime(today.sunrise)}</strong><span>Sunrise</span></div>
-          <div><Sunset size={25} /><strong>{formatTime(today.sunset)}</strong><span>Sunset</span></div>
+        <div className="hs-home-guidance">
+          <AlertTriangle size={16} />
+          <span>{guidanceForBand(band, fortyGuardSupported, cycle)}</span>
         </div>
       </section>
 
-      <section className={`hs-today-coverage-card ${fortyGuardSupported ? "supported" : "weather-only"}`}>
-        <span className="hs-today-coverage-icon">
-          {fortyGuardSupported ? <ShieldCheck size={23} /> : <ShieldAlert size={23} />}
-        </span>
+      <section className="hs-home-stat-row" aria-label="Current conditions">
         <div>
-          <strong>{fortyGuardSupported ? "FortyGuard is ready for this worksite" : "This place is in weather-context mode"}</strong>
-          <p>
-            {fortyGuardSupported
-              ? cycle
-                ? "Provider-backed worksite heat evidence is loaded. Review the plan or map comparison."
-                : "Scan this location to load hyperlocal heat cells, nearby lower-heat candidates, and the operational recommendation."
-              : `${location?.name || "This location"} can use general weather context. Choose a supported U.S. worksite to unlock FortyGuard occupational heat intelligence.`}
-          </p>
+          <Droplets size={19} />
+          <span>Humidity</span>
+          <strong>{rounded(humidity)}%</strong>
         </div>
-        {fortyGuardSupported ? (
-          !cycle ? (
-            <button type="button" onClick={onAnalyze} disabled={analysisBusy}>
-              {analysisBusy ? <LoaderCircle className="spinner" size={16} /> : null}
-              {analysisBusy ? "Scanning…" : "Scan worksite"}
-            </button>
-          ) : (
-            <button type="button" onClick={() => onNavigate("plan")}>Review plan</button>
-          )
-        ) : (
-          <button type="button" onClick={() => onNavigate("map")}>Choose U.S. worksite</button>
-        )}
+        <div>
+          <Wind size={19} />
+          <span>Wind</span>
+          <strong>{rounded(windMph)} mph</strong>
+        </div>
+        <div>
+          <SunMedium size={19} />
+          <span>UV Index</span>
+          <strong>{uvLabel(uv)}</strong>
+        </div>
       </section>
 
-      <section className="hs-feature-grid">
-        <button className="hs-feature-card hs-feature-blue" type="button" onClick={() => onNavigate(fortyGuardSupported ? "plan" : "map")}>
-          <span className="hs-feature-icon"><ClipboardList size={26} /></span>
-          <div className="hs-feature-body">
-            <strong>Build safer shift plan</strong>
-            <p>{!fortyGuardSupported ? "Choose a supported U.S. worksite for an evidence-backed occupational heat plan." : cycle ? `${cycle.agent_decision?.actions?.length ?? 0} recommended controls are ready to review.` : "Create a heat-aware schedule with workload, timing and recovery controls."}</p>
-            <b>{fortyGuardSupported ? cycle ? "Review plan" : "Create plan" : "Choose worksite"} <ArrowRight size={15} /></b>
-          </div>
-        </button>
+      <button className="hs-home-info-card hs-home-cooling" type="button" onClick={() => onNavigate("map")}>
+        <span className="hs-home-info-icon"><Leaf size={23} /></span>
+        <span className="hs-home-info-copy">
+          <small>{cooler ? "Nearest lower-heat area" : "Lower-heat area"}</small>
+          <strong>{coolerMiles !== null ? `${coolerMiles.toFixed(1)} mi away` : "Scan to compare nearby heat"}</strong>
+          {coolerTempF !== null ? <em>{rounded(coolerTempF)}°F candidate</em> : null}
+        </span>
+        <span className="hs-home-card-link">View on Map <ArrowRight size={14} /></span>
+      </button>
 
-        <button className="hs-feature-card hs-feature-green" type="button" onClick={() => onNavigate("map")}>
-          <span className="hs-feature-icon"><MapPinned size={26} /></span>
-          <div className="hs-feature-body">
-            <strong>Nearby lower-heat candidate</strong>
-            <p>{!fortyGuardSupported ? "FortyGuard spatial comparison becomes available after selecting a supported U.S. worksite." : cooler ? `Lower-heat candidate about ${coolerMiles.toFixed(1)} miles away.` : "Run a heat check to compare nearby FortyGuard heat cells."}</p>
-            <b>View on map <ArrowRight size={15} /></b>
-          </div>
-        </button>
+      <button className="hs-home-info-card hs-home-window" type="button" onClick={() => onNavigate("plan")}>
+        <span className="hs-home-info-icon"><Clock3 size={23} /></span>
+        <span className="hs-home-info-copy">
+          <small>Lower-heat work window today</small>
+          <strong>{workWindow?.label ?? "Forecast window loading"}</strong>
+          {workWindow?.tempF !== null && workWindow?.tempF !== undefined ? (
+            <em>Feels like about {rounded(workWindow.tempF)}°F</em>
+          ) : null}
+        </span>
+        <ArrowRight className="hs-home-end-arrow" size={18} />
+      </button>
 
-        <button className="hs-feature-card hs-feature-warm" type="button" onClick={() => onNavigate("team")}>
-          <span className="hs-feature-icon"><Users size={26} /></span>
-          <div className="hs-feature-body">
-            <strong>Workers needing attention</strong>
-            <div className="hs-worker-count"><em>{workerAttention}</em><span>worker{workerAttention === 1 ? "" : "s"}</span></div>
-            <p>{cycle && attention ? `${attention} current work factor${attention === 1 ? "" : "s"} deserve extra review.` : "Run the supported worksite heat check to combine worker context with heat evidence."}</p>
-            <b>View worker <ArrowRight size={15} /></b>
-          </div>
-        </button>
+      <button
+        className="hs-home-ai-cta"
+        type="button"
+        onClick={handlePrimaryAction}
+        disabled={analysisBusy}
+      >
+        <span className="hs-home-ai-icon">
+          {analysisBusy ? <LoaderCircle className="spinner" size={21} /> : <Sparkles size={21} />}
+        </span>
+        <span>
+          <strong>{cycle ? "VIEW AI RECOMMENDATION" : "WHAT SHOULD I DO?"}</strong>
+          <small>
+            {cycle
+              ? "Open the evidence-backed work plan"
+              : fortyGuardSupported
+                ? "Get AI Recommendation"
+                : "Choose a supported U.S. worksite"}
+          </small>
+        </span>
+        <ArrowRight size={20} />
+      </button>
 
-        <TimelineCard weather={weather} />
-      </section>
+      <p className="hs-home-source-note">
+        <MapPin size={13} /> FortyGuard is the primary heat-risk evidence source; weather context supplements the worksite view.
+      </p>
     </div>
   );
 }
