@@ -2,6 +2,7 @@ import { apiUrl } from "./apiBase.js";
 
 const SITE_TIMEOUT_MS = 360_000;
 const AGENT_TIMEOUT_MS = 600_000;
+const FORECAST_OFFSETS = [1, 3, 6, 9, 12];
 
 export class SitePlanApiError extends Error {
   constructor(message, { status = null, code = "site_plan_error" } = {}) {
@@ -107,9 +108,13 @@ function taskId(workerId, suffix) {
   return `${String(workerId).replace(/[^A-Za-z0-9_-]/g, "-")}-${suffix}`.slice(0, 100);
 }
 
-function siteDate(site) {
+function analysisSource(site) {
   const source = site?.analysis_datetime ? new Date(site.analysis_datetime) : new Date();
-  const date = Number.isNaN(source.getTime()) ? new Date() : source;
+  return Number.isNaN(source.getTime()) ? new Date() : source;
+}
+
+function siteDate(site) {
+  const date = analysisSource(site);
   try {
     const parts = Object.fromEntries(
       new Intl.DateTimeFormat("en-CA", {
@@ -130,14 +135,50 @@ function localDateTime(site, time) {
   return /^\d{2}:\d{2}$/.test(value) ? `${siteDate(site)}T${value}:00` : null;
 }
 
-function shiftTasks(worker) {
+function timeToMinutes(value) {
+  const match = String(value || "").match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function analysisMinuteOfDay(site) {
+  const date = analysisSource(site);
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: site?.timezone || "America/Phoenix",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]),
+    );
+    return Number(parts.hour) * 60 + Number(parts.minute);
+  } catch {
+    return date.getHours() * 60 + date.getMinutes();
+  }
+}
+
+function allowedOffsetsForShift(site, worker) {
+  const shiftStart = timeToMinutes(worker.shiftStart);
+  const shiftEnd = timeToMinutes(worker.shiftEnd);
+  if (shiftStart === null || shiftEnd === null || shiftEnd <= shiftStart) return [];
+  const nowMinutes = analysisMinuteOfDay(site);
+  return FORECAST_OFFSETS.filter((offset) => {
+    const candidate = nowMinutes + offset * 60;
+    return candidate < 24 * 60 && candidate >= shiftStart && candidate < shiftEnd;
+  });
+}
+
+function shiftTasks(site, worker) {
   if (!worker.reassignAllowed) return null;
-  const allowed = [1, 3, 6, 9, 12];
+  const allowed = allowedOffsetsForShift(site, worker);
+  const primaryOffset = allowed[0] ?? 1;
+  const alternateOffset = allowed[1] ?? allowed[0] ?? 1;
   const primary = {
     task_id: taskId(worker.workerId, "PRIMARY"),
     task_name: String(worker.currentTask || "Current task"),
     duration_minutes: Math.max(15, Number(worker.duration || 60)),
-    current_planned_offset_hours: 1,
+    current_planned_offset_hours: primaryOffset,
     flexible: true,
     allowed_offset_hours: allowed,
     workload_level: normalizeWorkload(worker.workload),
@@ -151,7 +192,7 @@ function shiftTasks(worker) {
       task_id: taskId(worker.workerId, "ALT"),
       task_name: String(worker.alternateTask),
       duration_minutes: Math.max(15, Number(worker.alternateDuration || 45)),
-      current_planned_offset_hours: 3,
+      current_planned_offset_hours: alternateOffset,
       flexible: true,
       allowed_offset_hours: allowed,
       workload_level: normalizeWorkload(worker.alternateWorkload || worker.workload),
@@ -213,7 +254,7 @@ export function createSiteSnapshotPayload(site, crew) {
         outdoor: worker.outdoor !== false,
         direct_sun: Boolean(worker.directSun),
       },
-      shift_tasks: shiftTasks(worker),
+      shift_tasks: shiftTasks(site, worker),
     };
   });
 
@@ -240,7 +281,7 @@ export function createSiteSnapshotPayload(site, crew) {
     },
     analysis_datetime: site.analysis_datetime ?? null,
     assignments,
-    forecast_offset_hours: [1, 3, 6, 9, 12],
+    forecast_offset_hours: FORECAST_OFFSETS,
     include_prediction: true,
     include_spatial_intelligence: true,
     spatial_search_radius_meters: Number(site.spatialRadiusMeters || 800),
