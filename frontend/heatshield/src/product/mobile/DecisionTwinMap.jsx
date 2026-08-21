@@ -8,7 +8,7 @@ import {
   useMap,
 } from "react-leaflet";
 
-import { polygonCenter } from "./planWorkspace.js";
+import { loadCrewMap, polygonCenter } from "./planWorkspace.js";
 import "./DecisionTwinMap.css";
 
 function TwinViewport({ site }) {
@@ -51,7 +51,8 @@ export default function DecisionTwinMap({
   const sitePositions = (site?.polygon || []).map((point) => [point.latitude, point.longitude]);
   const tiles = spatial?.tiles || [];
   const candidates = spatial?.candidates || [];
-  const visibleCrew = crew.length ? crew : worker ? [worker] : [];
+  const storedCrew = site?.id ? (loadCrewMap()[site.id] || []) : [];
+  const visibleCrew = crew.length ? crew : storedCrew.length ? storedCrew : worker ? [worker] : [];
   const temperatures = tiles
     .map((tile) => Number(tile.temperature_c))
     .filter(Number.isFinite);
