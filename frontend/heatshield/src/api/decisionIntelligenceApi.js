@@ -60,6 +60,25 @@ function sitePolygon(site) {
   };
 }
 
+function siteLocation(site) {
+  const points = Array.isArray(site?.polygon) ? site.polygon : [];
+  const latitude = points.length
+    ? points.reduce((sum, point) => sum + Number(point.latitude), 0) / points.length
+    : Number(site?.seedLatitude);
+  const longitude = points.length
+    ? points.reduce((sum, point) => sum + Number(point.longitude), 0) / points.length
+    : Number(site?.seedLongitude);
+  return {
+    site_id: site.id,
+    name: site.name || "HeatShield worksite",
+    city: site.city,
+    state: site.state,
+    country: "United States",
+    latitude,
+    longitude,
+  };
+}
+
 function workerLocation(site, worker) {
   return {
     site_id: site.id,
@@ -101,5 +120,21 @@ export async function fetchPremiumCandidateIntelligence(site, candidate, analysi
     street_vertical_angle: 10,
     street_horizontal_angle: 90,
     street_back_view: false,
+  });
+}
+
+export async function fetchSiteResilience(site, { startDate, endDate, thresholdC = 35 } = {}) {
+  const polygon = sitePolygon(site);
+  if (!site || !polygon || !startDate || !endDate) {
+    throw new DecisionIntelligenceError("A complete site polygon and historical date window are required.");
+  }
+  return post("/api/resilience/site-history", {
+    location: siteLocation(site),
+    timezone_name: site.timezone || "America/Phoenix",
+    site_polygon: polygon,
+    start_date: startDate,
+    end_date: endDate,
+    threshold_c: Number(thresholdC),
+    granularity: 100,
   });
 }
