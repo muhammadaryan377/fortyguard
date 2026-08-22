@@ -15,7 +15,7 @@ import { mapStateFromCycle } from "./product/productUtils.js";
 import AppShell from "./product/mobile/AppShell.jsx";
 import TodayScreen from "./product/mobile/TodayScreen.jsx";
 import MapScreen from "./product/mobile/MapScreen.jsx";
-import PlanScreen from "./product/mobile/PlanScreen.jsx";
+import CreatePlanScreen from "./product/mobile/CreatePlanScreen.jsx";
 import SiteSetupScreen from "./product/mobile/SiteSetupScreen.jsx";
 import CrewSetupScreen from "./product/mobile/CrewSetupScreen.jsx";
 import TeamScreen from "./product/mobile/TeamScreen.jsx";
@@ -510,7 +510,7 @@ export default function ProductApp() {
       ) : null}
       {activeTab === "site-setup" ? <SiteSetupScreen {...shared} /> : null}
       {activeTab === "crew-setup" ? <CrewSetupScreen {...shared} /> : null}
-      {activeTab === "plan" ? <PlanScreen {...shared} /> : null}
+      {activeTab === "plan" ? <CreatePlanScreen {...shared} /> : null}
       {activeTab === "checkin" ? (
         <div className="hs-screen">
           <section className="hs-checkin-placeholder">
