@@ -6,6 +6,7 @@ import {
   Clock3,
   Edit3,
   MapPin,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Users,
@@ -14,6 +15,7 @@ import {
 import { createSiteAgentPlan, createSiteSnapshot } from "../../api/sitePlanApi.js";
 import { ACTION_COPY, humanize } from "../productUtils.js";
 import DecisionWorkbench from "./DecisionWorkbench.jsx";
+import { loadOperationalPlan, saveOperationalPlan } from "./operationalPlanState.js";
 import {
   activeWorkZones,
   cToF,
@@ -122,12 +124,13 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
     return { site, crew: site ? (crewMap[site.id] ?? []) : [] };
   }, [location]);
 
-  const [snapshot, setSnapshot] = useState(null);
-  const [agentPlan, setAgentPlan] = useState(null);
-  const [selectedWorkerId, setSelectedWorkerId] = useState("");
+  const { site, crew } = setup;
+  const cachedPlan = useMemo(() => loadOperationalPlan(site, crew), [site, crew]);
+  const [snapshot, setSnapshot] = useState(() => cachedPlan?.snapshot ?? null);
+  const [agentPlan, setAgentPlan] = useState(() => cachedPlan?.agentPlan ?? null);
+  const [selectedWorkerId, setSelectedWorkerId] = useState(() => cachedPlan?.agentPlan?.results?.[0]?.worker_id || "");
   const [busyStage, setBusyStage] = useState(null);
   const [localError, setLocalError] = useState(null);
-  const { site, crew } = setup;
   const workZones = activeWorkZones(site);
   const siteReady = Boolean(site?.polygon?.length >= 3 && workZones.length);
   const crewReady = Boolean(
@@ -153,14 +156,15 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
     setSnapshot(null);
     setAgentPlan(null);
     try {
-      setBusyStage("Scanning the master site once and extracting worker evidence…");
+      setBusyStage("Scanning site heat once and extracting worker evidence…");
       const nextSnapshot = await createSiteSnapshot(site, crew);
       setSnapshot(nextSnapshot);
-      setBusyStage("Building bounded worker decisions from the fresh site snapshot…");
+      setBusyStage("Building worker decisions in parallel from fresh evidence…");
       const workerIds = nextSnapshot.attention_queue?.length ? nextSnapshot.attention_queue : crew.map((worker) => worker.workerId);
       const nextAgentPlan = await createSiteAgentPlan(nextSnapshot.snapshot_id, workerIds);
       setAgentPlan(nextAgentPlan);
       setSelectedWorkerId(nextAgentPlan.results?.[0]?.worker_id || workerIds[0] || "");
+      saveOperationalPlan(site, crew, nextSnapshot, nextAgentPlan);
       setBusyStage(null);
 
       const primary = crew[0];
@@ -184,7 +188,7 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
       {localError ? <div className="hs-plan-local-error"><AlertTriangle size={16} /><span>{localError}</span><button type="button" onClick={() => setLocalError(null)}>×</button></div> : null}
 
       <section className="hs-plan-compact-header">
-        <div><span>SITE</span><strong>{site?.name || "No site selected"}</strong><small>{workZones.length} work zone{workZones.length === 1 ? "" : "s"} · {crew.length} active worker{crew.length === 1 ? "" : "s"}</small></div>
+        <div><span>SITE</span><strong>{site?.name || "No site selected"}</strong><small>{workZones.length} work zone{workZones.length === 1 ? "" : "s"} · {crew.length} active worker{crew.length === 1 ? "" : "s"}{cachedPlan ? " · current plan restored" : ""}</small></div>
         <button type="button" onClick={() => onNavigate("crew-setup")}><Edit3 size={15} /> Edit workers</button>
       </section>
 
@@ -196,7 +200,7 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
       ) : !agentPlan ? (
         <button className="hs-advanced-build-button" type="button" disabled={Boolean(busyStage)} onClick={buildPlan}>
           <span className="icon"><Sparkles size={22} /></span>
-          <span><strong>{busyStage || `GENERATE ${crew.length} WORKER PLAN${crew.length === 1 ? "" : "S"}`}</strong><small>One current master heatmap + shared forecast maps → per-worker tile extraction → bounded agent decisions</small></span>
+          <span><strong>{busyStage || `GENERATE ${crew.length} WORKER PLAN${crew.length === 1 ? "" : "S"}`}</strong><small>One site heat scan + shared forecast maps → worker-specific evidence → bounded DeepSeek decisions</small></span>
           <ArrowRight size={21} />
         </button>
       ) : null}
@@ -226,6 +230,7 @@ export default function PlanScreen({ location, onNavigate, setWork }) {
 
           {selectedResult ? <AgentWorkerResult result={selectedResult} snapshot={snapshot} crew={crew} site={site} /> : null}
           <DecisionWorkbench agentPlan={agentPlan} crew={crew} site={site} selectedWorkerId={selectedResult?.worker_id || ""} onSelectedWorkerChange={setSelectedWorkerId} showWorkerTabs={false} />
+          <button className="hs-screen-refresh" type="button" disabled={Boolean(busyStage)} onClick={buildPlan}><RefreshCw size={14} /> {busyStage || "Regenerate with fresh evidence"}</button>
         </section>
       ) : null}
     </div>
