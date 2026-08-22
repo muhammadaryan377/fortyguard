@@ -487,6 +487,9 @@ export default function ProductApp() {
       location={location}
       locationBusy={locationBusy}
       cycle={cycle}
+      onRefresh={cycle?.cycle_id ? refreshPlan : analyze}
+      analysisBusy={analysisBusy}
+      operationBusy={operationBusy}
       message={message}
       error={error}
       onDismissMessage={() => setMessage(null)}
