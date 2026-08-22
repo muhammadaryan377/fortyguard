@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -33,26 +33,15 @@ function zoneTypeLabel(value) {
 }
 
 function initializeSiteSetup(location) {
-  let sites = loadSites(location);
-  let selectedSiteId = loadSelectedSiteId(sites);
-  let mapMode = "idle";
+  const sites = loadSites(location);
+  const selectedSiteId = loadSelectedSiteId(sites);
   let intent = null;
   try {
     intent = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY);
-    window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
   } catch {
     intent = null;
   }
-  if (intent === "add") {
-    const next = seedSite(location, `SITE-${Date.now()}`);
-    next.name = sites.some((site) => site.name === next.name) ? `${next.name} ${sites.length + 1}` : next.name;
-    sites = [...sites, next];
-    selectedSiteId = next.id;
-    mapMode = "draw";
-    saveSites(sites);
-    saveSelectedSiteId(next.id);
-  }
-  return { sites, selectedSiteId, mapMode };
+  return { sites, selectedSiteId, mapMode: intent === "add" ? "draw" : "idle" };
 }
 
 export default function SiteSetupScreen({ location, onNavigate }) {
@@ -63,6 +52,14 @@ export default function SiteSetupScreen({ location, onNavigate }) {
   const [activeZoneId, setActiveZoneId] = useState(null);
   const [newZoneType, setNewZoneType] = useState("work");
   const [localError, setLocalError] = useState(null);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
+    } catch {
+      // Navigation intent is optional; setup remains fully usable without storage.
+    }
+  }, []);
 
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0] ?? null;
   const activeZone = selectedSite?.zones?.find((zone) => zone.id === activeZoneId) || null;
@@ -164,6 +161,32 @@ export default function SiteSetupScreen({ location, onNavigate }) {
     setLocalError(null);
   }
 
+  function handleVertexMove(kind, index, point, zoneId = null) {
+    if (!selectedSite) return false;
+    if (kind === "site") {
+      const polygon = [...(selectedSite.polygon || [])];
+      if (!polygon[index]) return false;
+      polygon[index] = point;
+      updateSelectedSite({ polygon });
+      setLocalError(null);
+      return true;
+    }
+    if (kind === "zone") {
+      if (!pointInPolygon(point, selectedSite.polygon || [])) {
+        setLocalError("Operational zone vertices must remain inside the master site boundary.");
+        return false;
+      }
+      const zone = (selectedSite.zones || []).find((item) => item.id === zoneId);
+      if (!zone?.polygon?.[index]) return false;
+      const polygon = [...zone.polygon];
+      polygon[index] = point;
+      updateZone(zone.id, { polygon });
+      setLocalError(null);
+      return true;
+    }
+    return false;
+  }
+
   function continueToCrew() {
     if (!masterReady) {
       setLocalError("Draw the full master site boundary before adding workers.");
@@ -210,26 +233,26 @@ export default function SiteSetupScreen({ location, onNavigate }) {
 
       <section className="hs-advanced-card hs-site-boundary-card">
         <div className="hs-advanced-card-heading">
-          <div><span>2 · MASTER SITE BOUNDARY</span><h2>Draw the full property / site</h2><p>This is the thermal context envelope, not a claim that every point is a valid work location.</p></div>
+          <div><span>2 · MASTER SITE BOUNDARY</span><h2>Draw or correct the full property / site</h2><p>Click to add boundary points. While drawing is active, drag any numbered vertex to correct the real property edge.</p></div>
           <div className="hs-boundary-meta"><strong>{selectedSite?.polygon?.length ?? 0}</strong><span>vertices</span>{areaAcres !== null ? <em>{areaAcres.toFixed(areaAcres < 10 ? 1 : 0)} acres</em> : null}</div>
         </div>
-        {selectedSite ? <PlanMapEditor site={selectedSite} mode={mapMode} activeZoneId={activeZoneId} onMapClick={handleMapClick} /> : null}
+        {selectedSite ? <PlanMapEditor site={selectedSite} mode={mapMode} activeZoneId={activeZoneId} onMapClick={handleMapClick} onVertexMove={handleVertexMove} /> : null}
         <div className="hs-map-editor-actions">
           <button type="button" className={mapMode === "draw" ? "active" : ""} onClick={() => { setMapMode(mapMode === "draw" ? "idle" : "draw"); setActiveZoneId(null); }}>
-            <MapPin size={16} /> {mapMode === "draw" ? "Finish master boundary" : "Draw / extend master boundary"}
+            <MapPin size={16} /> {mapMode === "draw" ? "Finish boundary editing" : "Draw / edit master boundary"}
           </button>
           <button type="button" disabled={!selectedSite?.polygon?.length} onClick={() => updateSelectedSite({ polygon: (selectedSite.polygon ?? []).slice(0, -1) })}><RotateCcw size={16} /> Undo point</button>
           <button type="button" disabled={!selectedSite?.polygon?.length} onClick={() => { updateSelectedSite({ polygon: [], zones: [] }); setActiveZoneId(null); setMapMode("idle"); }}><Trash2 size={16} /> Clear site</button>
         </div>
         <div className={`hs-boundary-readiness ${masterReady ? "ready" : ""}`}>
           {masterReady ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-          <span>{masterReady ? "Master site locked. Now define the operational zones inside it." : "Add at least 3 master boundary points."}</span>
+          <span>{masterReady ? "Master site geometry ready. Any zone pushed outside it will block planning until corrected." : "Add at least 3 master boundary points."}</span>
         </div>
       </section>
 
       <section className="hs-advanced-card hs-zone-builder-card">
         <div className="hs-advanced-card-heading">
-          <div><span>3 · OPERATIONAL ZONES</span><h2>Separate work areas from the rest of the property</h2><p>Only active work zones can hold workers. Only relocation-enabled work/recovery zones can become lower-temperature alternatives.</p></div>
+          <div><span>3 · OPERATIONAL ZONES</span><h2>Separate work areas from the rest of the property</h2><p>Only active work zones can hold workers. Draw new points or drag existing numbered vertices while editing a zone.</p></div>
           <div className="hs-zone-count"><Layers3 size={17} /><strong>{activeZones.length}</strong><span>active</span></div>
         </div>
 
@@ -254,7 +277,7 @@ export default function SiteSetupScreen({ location, onNavigate }) {
                   <div className="hs-zone-row-controls">
                     <label><input type="checkbox" checked={zone.active} onChange={(event) => updateZone(zone.id, { active: event.target.checked })} /> Active</label>
                     {["work", "recovery"].includes(zone.type) ? <label><input type="checkbox" checked={zone.relocationAllowed} onChange={(event) => updateZone(zone.id, { relocationAllowed: event.target.checked })} /> Alternative allowed</label> : null}
-                    <button type="button" onClick={() => editZone(zone.id)}><MapPin size={14} /> {zone.id === activeZoneId && mapMode === "zone" ? "Drawing…" : "Draw"}</button>
+                    <button type="button" onClick={() => editZone(zone.id)}><MapPin size={14} /> {zone.id === activeZoneId && mapMode === "zone" ? "Editing…" : "Draw / edit"}</button>
                     <button type="button" disabled={!zone.polygon?.length} onClick={() => updateZone(zone.id, { polygon: (zone.polygon || []).slice(0, -1) })}><RotateCcw size={14} /></button>
                     <button type="button" onClick={() => removeZone(zone.id)}><Trash2 size={14} /></button>
                   </div>
