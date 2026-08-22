@@ -142,6 +142,10 @@ export default function GoogleSiteMap({
           infoWindow.setContent(`<div style="font:600 12px system-ui;color:#20334a"><strong>FortyGuard TCM</strong><br/>${label}</div>`);
           infoWindow.setPosition(event.latLng);
           infoWindow.open({ map: mapRef.current });
+          callbacksRef.current.onMapClick?.({
+            latitude: event.latLng.lat(),
+            longitude: event.latLng.lng(),
+          });
         });
         overlaysRef.current.push(polygon);
       });
