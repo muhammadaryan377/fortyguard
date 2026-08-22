@@ -80,28 +80,33 @@ async function request(path, { method = "GET", payload, timeoutMs = SITE_TIMEOUT
 }
 
 function normalizeWorkload(value) {
-  return ["light", "moderate", "heavy", "very_heavy"].includes(value)
-    ? value
-    : "moderate";
+  return ["light", "moderate", "heavy", "very_heavy"].includes(value) ? value : "moderate";
 }
 
 function normalizePpe(value) {
-  return ["none", "light", "moderate", "heavy"].includes(value)
-    ? value
-    : "light";
+  return ["none", "light", "moderate", "heavy"].includes(value) ? value : "light";
 }
 
 function closeRing(points) {
   if (!Array.isArray(points) || points.length < 3) {
-    throw new SitePlanApiError("Draw at least three site boundary points on the map.", {
-      code: "site_polygon_required",
-    });
+    throw new SitePlanApiError("Draw at least three polygon points on the map.", { code: "site_polygon_required" });
   }
   const ring = points.map((point) => [Number(point.longitude), Number(point.latitude)]);
   const first = ring[0];
   const last = ring[ring.length - 1];
   if (first[0] !== last[0] || first[1] !== last[1]) ring.push([...first]);
   return ring;
+}
+
+function polygonFeature(points, properties = {}) {
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      properties,
+      geometry: { type: "Polygon", coordinates: [closeRing(points)] },
+    }],
+  };
 }
 
 function taskId(workerId, suffix) {
@@ -204,15 +209,14 @@ function shiftTasks(site, worker) {
 
 export function createSiteSnapshotPayload(site, crew) {
   if (!site?.polygon?.length) {
-    throw new SitePlanApiError("Select a saved site and draw its full boundary before building the plan.", {
-      code: "site_polygon_required",
-    });
+    throw new SitePlanApiError("Select a saved site and draw its master boundary before building the plan.", { code: "site_polygon_required" });
   }
   if (!Array.isArray(crew) || !crew.length) {
-    throw new SitePlanApiError("Add at least one worker before building the plan.", {
-      code: "worker_required",
-    });
+    throw new SitePlanApiError("Add at least one worker before building the plan.", { code: "worker_required" });
   }
+  const zones = (site.zones || []).filter((zone) => zone.polygon?.length >= 3);
+  const workZones = zones.filter((zone) => zone.active && zone.type === "work");
+  if (!workZones.length) throw new SitePlanApiError("At least one active work zone is required.", { code: "work_zone_required" });
 
   const firstWorkerPoint = crew.find((worker) => (
     Number.isFinite(Number(worker?.position?.latitude))
@@ -231,15 +235,13 @@ export function createSiteSnapshotPayload(site, crew) {
     const shiftEnd = localDateTime(site, worker.shiftEnd);
     return {
       display_label: String(worker.name || worker.workerId || `Worker ${index + 1}`),
-      position: {
-        latitude,
-        longitude,
-        label: worker.zoneLabel || worker.position?.label || null,
-      },
+      position: { latitude, longitude, label: worker.zoneLabel || worker.position?.label || null },
+      spatial_relocation_allowed: Boolean(worker.reassignAllowed),
+      allowed_zone_ids: worker.reassignAllowed ? [...new Set(worker.allowedZoneIds || [])] : [],
       worker: {
         worker_id: String(worker.workerId || `WORKER-${String(index + 1).padStart(2, "0")}`),
         site_id: siteId,
-        zone_id: String(worker.zoneId || worker.zoneLabel || `ZONE-${index + 1}`).slice(0, 100),
+        zone_id: String(worker.zoneId || "").slice(0, 100),
         acclimatized: Boolean(worker.acclimatized),
         ppe_level: normalizePpe(worker.ppe),
         clothing_factor: Math.max(0, Number(worker.clothingFactor || 0)),
@@ -269,16 +271,15 @@ export function createSiteSnapshotPayload(site, crew) {
       longitude: Number(firstWorkerPoint.longitude),
     },
     timezone_name: String(site.timezone || "America/Phoenix"),
-    site_polygon: {
-      type: "FeatureCollection",
-      features: [
-        {
-          type: "Feature",
-          properties: { site_id: siteId, name: String(site.name || "Selected worksite") },
-          geometry: { type: "Polygon", coordinates: [closeRing(site.polygon)] },
-        },
-      ],
-    },
+    site_polygon: polygonFeature(site.polygon, { site_id: siteId, name: String(site.name || "Selected worksite"), boundary_role: "master_site" }),
+    operational_zones: zones.map((zone) => ({
+      zone_id: String(zone.id),
+      name: String(zone.name),
+      zone_type: zone.type,
+      active: zone.active !== false,
+      relocation_allowed: Boolean(zone.relocationAllowed),
+      polygon: polygonFeature(zone.polygon, { zone_id: String(zone.id), name: String(zone.name), zone_type: zone.type }),
+    })),
     analysis_datetime: site.analysis_datetime ?? null,
     assignments,
     forecast_offset_hours: FORECAST_OFFSETS,

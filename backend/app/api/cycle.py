@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app.api.risk import _provider_error
 from app.models.operations import ApprovalRequest, ApprovalResponse, AuditEvent, CyclePlanResponse, HeatShieldCycleRequest, VerificationResponse
 from app.services.cycle_orchestrator import CycleOrchestrator
+from app.services.spatial_context import operational_polygon_context
 from app.services.state_store import SQLiteHeatShieldStateStore
 
 router = APIRouter(prefix="/cycle", tags=["Operational cycle"])
@@ -23,8 +24,13 @@ def get_orchestrator() -> CycleOrchestrator:
 
 @router.post("/plan", response_model=CyclePlanResponse)
 async def plan(payload: HeatShieldCycleRequest) -> CyclePlanResponse:
-    try: return await get_orchestrator().plan(payload)
-    except Exception as exc: raise _provider_error(exc) from exc
+    token = operational_polygon_context.set(payload.operational_polygon)
+    try:
+        return await get_orchestrator().plan(payload)
+    except Exception as exc:
+        raise _provider_error(exc) from exc
+    finally:
+        operational_polygon_context.reset(token)
 
 
 @router.post("/{cycle_id}/approve", response_model=ApprovalResponse)

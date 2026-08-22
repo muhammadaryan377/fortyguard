@@ -1,5 +1,6 @@
 """Supervisor-ready multi-worker site snapshot endpoints."""
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, HTTPException
@@ -16,8 +17,12 @@ from app.models.site import (
 )
 from app.services.cycle_orchestrator import CycleOrchestrator
 from app.services.site_operations import SiteOperationsOrchestrator
+from app.services.snapshot_agent_cycle import create_snapshot_agent_cycle
 
 router = APIRouter(prefix="/site", tags=["Multi-worker site intelligence"])
+
+AGENT_PLAN_WORKER_CONCURRENCY = 3
+SNAPSHOT_REUSE_MAX_AGE_SECONDS = 120
 
 PHOENIX_EXAMPLE = {
     "location": {"site_id": "PHX-01", "name": "Phoenix Operations Site", "city": "Phoenix",
@@ -30,9 +35,6 @@ PHOENIX_EXAMPLE = {
         {"display_label": "Yard inspection", "worker": {"worker_id": "W-002", "site_id": "PHX-01", "acclimatized": True},
          "task": {"task_id": "T-YARD", "task_name": "Outdoor equipment inspection", "workload_level": "moderate",
              "exposure_duration_minutes": 60, "outdoor": True, "direct_sun": False}},
-        {"display_label": "Gate records", "worker": {"worker_id": "W-003", "site_id": "PHX-01", "acclimatized": True},
-         "task": {"task_id": "T-GATE", "task_name": "Gate inventory records", "workload_level": "light",
-             "exposure_duration_minutes": 45, "outdoor": True, "direct_sun": False}},
     ],
     "include_prediction": True, "include_spatial_intelligence": True,
     "include_shift_optimization": False,
@@ -43,9 +45,23 @@ def get_site_orchestrator() -> SiteOperationsOrchestrator:
     return SiteOperationsOrchestrator(get_store())
 
 
+def _snapshot_creation_age_seconds(snapshot_id: str) -> float | None:
+    """Use the real audit creation timestamp, not the rounded thermal-analysis anchor."""
+    events = get_store().get_audit(snapshot_id)
+    created = next((event for event in events if event.get("event_type") == "site_snapshot_created"), None)
+    if not created or not created.get("timestamp"):
+        return None
+    try:
+        created_at = datetime.fromisoformat(str(created["timestamp"]))
+    except ValueError:
+        return None
+    created_at = created_at.replace(tzinfo=UTC) if created_at.tzinfo is None else created_at.astimezone(UTC)
+    return max(0.0, (datetime.now(UTC) - created_at).total_seconds())
+
+
 @router.post("/operations-snapshot", response_model=SiteOperationsResponse)
 async def create_snapshot(payload: SiteOperationsRequest = Body(openapi_examples={
-        "phoenix_three_workers": {"summary": "Phoenix site with three worker assignments", "value": PHOENIX_EXAMPLE}})) -> SiteOperationsResponse:
+        "phoenix_two_workers": {"summary": "Phoenix site with two worker assignments", "value": PHOENIX_EXAMPLE}})) -> SiteOperationsResponse:
     try:
         return await get_site_orchestrator().create(payload)
     except Exception as exc:
@@ -71,13 +87,7 @@ async def selected_worker_cycle_request(snapshot_id: str, worker_id: str) -> Sel
 
 @router.post("/operations-snapshot/{snapshot_id}/agent-plan", response_model=SiteAgentPlanResponse)
 async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest) -> SiteAgentPlanResponse:
-    """Run bounded worker cycles in deterministic attention order.
-
-    The site snapshot remains the shared supervisor view. Each selected worker
-    cycle deliberately refreshes provider evidence at that worker's submitted
-    coordinates before DeepSeek is allowed to select from server-defined tools.
-    """
-
+    """Build bounded worker decisions from fresh snapshot evidence, with safe fresh-cycle fallback."""
     site_orchestrator = get_site_orchestrator()
     try:
         snapshot = site_orchestrator.get(snapshot_id)
@@ -91,14 +101,39 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
 
     requested = set(payload.worker_ids)
     ordered = [worker_id for worker_id in snapshot.attention_queue if worker_id in requested]
+    snapshot_workers = {worker.worker_id: worker for worker in snapshot.workers}
     cycle_orchestrator = CycleOrchestrator(get_store())
-    results: list[SiteWorkerAgentResult] = []
+    semaphore = asyncio.Semaphore(AGENT_PLAN_WORKER_CONCURRENCY)
+    snapshot_age_seconds = _snapshot_creation_age_seconds(snapshot_id)
+    reuse_fresh = snapshot_age_seconds is not None and snapshot_age_seconds <= SNAPSHOT_REUSE_MAX_AGE_SECONDS
+
+    async def run_worker(index: int, worker_id: str):
+        helper = site_orchestrator.cycle_request(snapshot_id, worker_id)
+        worker = snapshot_workers[worker_id]
+        async with semaphore:
+            reused = bool(reuse_fresh and worker.heat_outlook is not None and worker.current_assessment is not None)
+            if reused:
+                cycle = await create_snapshot_agent_cycle(
+                    store=get_store(),
+                    cycle_request=helper.cycle_request,
+                    assessment=worker.current_assessment,
+                    outlook=worker.heat_outlook,
+                    spatial=worker.spatial_heat,
+                    optimization=worker.shift_optimization,
+                    snapshot_id=snapshot_id,
+                    generated_at=datetime.now(UTC),
+                )
+            else:
+                cycle = await cycle_orchestrator.plan(helper.cycle_request)
+        return index, SiteWorkerAgentResult(worker_id=worker_id, cycle=cycle), reused
 
     try:
-        for worker_id in ordered:
-            helper = site_orchestrator.cycle_request(snapshot_id, worker_id)
-            cycle = await cycle_orchestrator.plan(helper.cycle_request)
-            results.append(SiteWorkerAgentResult(worker_id=worker_id, cycle=cycle))
+        completed = await asyncio.gather(
+            *(run_worker(index, worker_id) for index, worker_id in enumerate(ordered))
+        )
+        completed = sorted(completed, key=lambda item: item[0])
+        results = [item for _, item, _ in completed]
+        reused_count = sum(int(reused) for _, _, reused in completed)
     except Exception as exc:
         raise _provider_error(exc) from exc
 
@@ -110,6 +145,11 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
             "worker_ids": ordered,
             "worker_count": len(results),
             "cycle_ids": [item.cycle.cycle_id for item in results],
+            "snapshot_evidence_reused_count": reused_count,
+            "fresh_cycle_fallback_count": len(results) - reused_count,
+            "snapshot_age_seconds": snapshot_age_seconds,
+            "snapshot_reuse_max_age_seconds": SNAPSHOT_REUSE_MAX_AGE_SECONDS,
+            "worker_decision_concurrency": AGENT_PLAN_WORKER_CONCURRENCY,
         },
     )
     return SiteAgentPlanResponse(
@@ -118,7 +158,9 @@ async def create_site_agent_plan(snapshot_id: str, payload: SiteAgentPlanRequest
         worker_count=len(results),
         results=results,
         limitations=[
-            "Worker cycles refresh provider evidence independently and may differ from the earlier site snapshot.",
-            "Every proposed action remains human-gated and must be approved before it is recorded operationally.",
+            f"Snapshot evidence is reused only when the actual snapshot creation age is at most {SNAPSHOT_REUSE_MAX_AGE_SECONDS} seconds; stale/incomplete workers fall back to a fresh provider cycle.",
+            "Shared site forecast maps are extracted separately at each worker coordinate; temperatures are not copied from another worker.",
+            "Spatial alternatives are constrained to supervisor-configured relocation-enabled work/recovery zones.",
+            "Every operational action remains human-gated. VERIFY obtains fresh provider evidence and does not rely on snapshot reuse.",
         ],
     )

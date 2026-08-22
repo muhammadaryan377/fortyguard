@@ -3,6 +3,13 @@ export const SELECTED_SITE_STORAGE_KEY = "heatshield.selectedSite.v3";
 export const CREW_STORAGE_KEY = "heatshield.siteCrews.v3";
 export const MAX_AGENT_WORKERS = 10;
 
+export const ZONE_TYPES = [
+  { value: "work", label: "Work zone" },
+  { value: "recovery", label: "Recovery zone" },
+  { value: "restricted", label: "Restricted / no-go" },
+  { value: "transit", label: "Transit / other" },
+];
+
 export const TASK_OPTIONS = [
   "Outdoor field work",
   "Materials move",
@@ -36,6 +43,65 @@ export function locationLabel(location) {
   return raw === "Phoenix Central City" ? "Phoenix Yard" : raw;
 }
 
+function copyPolygon(polygon) {
+  return Array.isArray(polygon)
+    ? polygon.map((point) => ({ latitude: Number(point.latitude), longitude: Number(point.longitude) }))
+      .filter((point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude))
+    : [];
+}
+
+export function createZone(index = 1, type = "work") {
+  const labels = {
+    work: "Work Area",
+    recovery: "Recovery Area",
+    restricted: "Restricted Area",
+    transit: "Transit / Other",
+  };
+  return {
+    id: `ZONE-${Date.now()}-${index}`,
+    name: `${labels[type] || "Zone"} ${index}`,
+    type,
+    polygon: [],
+    active: true,
+    relocationAllowed: type === "work" || type === "recovery",
+  };
+}
+
+export function normalizeZone(zone, index = 0) {
+  const type = ["work", "recovery", "restricted", "transit"].includes(zone?.type) ? zone.type : "work";
+  return {
+    id: String(zone?.id || `ZONE-${index + 1}`),
+    name: String(zone?.name || `Zone ${index + 1}`),
+    type,
+    polygon: copyPolygon(zone?.polygon),
+    active: zone?.active !== false,
+    relocationAllowed: zone?.relocationAllowed ?? (type === "work" || type === "recovery"),
+    legacyGenerated: Boolean(zone?.legacyGenerated),
+  };
+}
+
+export function normalizeSite(site) {
+  const polygon = copyPolygon(site?.polygon);
+  let zones = Array.isArray(site?.zones) ? site.zones.map(normalizeZone) : [];
+  if (!zones.length && polygon.length >= 3) {
+    zones = [{
+      id: "ZONE-PRIMARY",
+      name: "Primary Work Area",
+      type: "work",
+      polygon: copyPolygon(polygon),
+      active: true,
+      relocationAllowed: true,
+      legacyGenerated: true,
+    }];
+  }
+  return {
+    ...site,
+    polygon,
+    zones,
+    spatialRadiusMeters: Number(site?.spatialRadiusMeters || 800),
+  };
+}
+
 export function seedSite(location, id = null) {
   const latitude = Number(location?.latitude);
   const longitude = Number(location?.longitude);
@@ -51,13 +117,14 @@ export function seedSite(location, id = null) {
     seedLongitude: Number.isFinite(longitude) ? longitude : -112.074,
     analysis_datetime: location?.analysis_datetime ?? null,
     polygon: [],
+    zones: [],
     spatialRadiusMeters: 800,
   };
 }
 
 export function loadSites(location) {
   const saved = readStorage(SITE_STORAGE_KEY, []);
-  if (Array.isArray(saved) && saved.length) return saved;
+  if (Array.isArray(saved) && saved.length) return saved.map(normalizeSite);
   return [seedSite(location)];
 }
 
@@ -73,7 +140,7 @@ export function loadCrewMap() {
 }
 
 export function saveSites(sites) {
-  writeStorage(SITE_STORAGE_KEY, sites);
+  writeStorage(SITE_STORAGE_KEY, sites.map(normalizeSite));
 }
 
 export function saveSelectedSiteId(siteId) {
@@ -95,6 +162,14 @@ export function polygonCenter(site) {
   return [Number(site?.seedLatitude || 33.4484), Number(site?.seedLongitude || -112.074)];
 }
 
+export function polygonCenterPoint(polygon) {
+  if (!Array.isArray(polygon) || !polygon.length) return null;
+  return {
+    latitude: polygon.reduce((sum, point) => sum + Number(point.latitude), 0) / polygon.length,
+    longitude: polygon.reduce((sum, point) => sum + Number(point.longitude), 0) / polygon.length,
+  };
+}
+
 export function pointInPolygon(point, polygon) {
   if (!point || !Array.isArray(polygon) || polygon.length < 3) return false;
   const x = Number(point.longitude);
@@ -111,6 +186,47 @@ export function pointInPolygon(point, polygon) {
     if (intersects) inside = !inside;
   }
   return inside;
+}
+
+export function zoneById(site, zoneId) {
+  return (site?.zones || []).find((zone) => zone.id === zoneId) || null;
+}
+
+export function activeWorkZones(site) {
+  return (site?.zones || []).filter((zone) => zone.active && zone.type === "work" && zone.polygon?.length >= 3);
+}
+
+export function activeCandidateZones(site) {
+  return (site?.zones || []).filter((zone) => (
+    zone.active
+    && zone.relocationAllowed
+    && ["work", "recovery"].includes(zone.type)
+    && zone.polygon?.length >= 3
+  ));
+}
+
+export function pointInAnyZone(point, zones) {
+  return (zones || []).some((zone) => pointInPolygon(point, zone.polygon || []));
+}
+
+export function zoneForPoint(site, point, types = null) {
+  return (site?.zones || []).find((zone) => (
+    zone.active
+    && (!types || types.includes(zone.type))
+    && pointInPolygon(point, zone.polygon || [])
+  )) || null;
+}
+
+export function workerPositionValid(worker, site) {
+  const zone = zoneById(site, worker?.zoneId);
+  return Boolean(
+    worker?.position
+    && zone
+    && zone.active
+    && zone.type === "work"
+    && pointInPolygon(worker.position, site?.polygon || [])
+    && pointInPolygon(worker.position, zone.polygon || [])
+  );
 }
 
 export function polygonAreaAcres(polygon) {
@@ -143,9 +259,10 @@ export function createWorker(crew) {
   return {
     workerId: `WORKER-${String(number).padStart(2, "0")}`,
     name: `Worker ${String(number).padStart(2, "0")}`,
-    zoneId: `ZONE-${String(number).padStart(2, "0")}`,
+    zoneId: "",
     zoneLabel: "",
     position: null,
+    allowedZoneIds: [],
     shiftStart: "06:00",
     shiftEnd: "18:00",
     currentTask: "Outdoor field work",
@@ -165,6 +282,7 @@ export function createWorker(crew) {
 }
 
 export function cToF(value) {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? Math.round((number * 9) / 5 + 32) : null;
 }
