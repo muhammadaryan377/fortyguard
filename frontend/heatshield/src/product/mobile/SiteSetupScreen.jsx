@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -26,15 +26,40 @@ import {
 } from "./planWorkspace.js";
 import "./OperationalZones.css";
 
+const SITE_SETUP_INTENT_KEY = "heatshield.siteSetup.intent.v1";
+
 function zoneTypeLabel(value) {
   return ZONE_TYPES.find((item) => item.value === value)?.label || value;
 }
 
+function initializeSiteSetup(location) {
+  let sites = loadSites(location);
+  let selectedSiteId = loadSelectedSiteId(sites);
+  let mapMode = "idle";
+  let intent = null;
+  try {
+    intent = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY);
+    window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
+  } catch {
+    intent = null;
+  }
+  if (intent === "add") {
+    const next = seedSite(location, `SITE-${Date.now()}`);
+    next.name = sites.some((site) => site.name === next.name) ? `${next.name} ${sites.length + 1}` : next.name;
+    sites = [...sites, next];
+    selectedSiteId = next.id;
+    mapMode = "draw";
+    saveSites(sites);
+    saveSelectedSiteId(next.id);
+  }
+  return { sites, selectedSiteId, mapMode };
+}
+
 export default function SiteSetupScreen({ location, onNavigate }) {
-  const initialSites = useMemo(() => loadSites(location), [location]);
-  const [sites, setSites] = useState(initialSites);
-  const [selectedSiteId, setSelectedSiteId] = useState(() => loadSelectedSiteId(initialSites));
-  const [mapMode, setMapMode] = useState("idle");
+  const [initialSetup] = useState(() => initializeSiteSetup(location));
+  const [sites, setSites] = useState(initialSetup.sites);
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSetup.selectedSiteId);
+  const [mapMode, setMapMode] = useState(initialSetup.mapMode);
   const [activeZoneId, setActiveZoneId] = useState(null);
   const [newZoneType, setNewZoneType] = useState("work");
   const [localError, setLocalError] = useState(null);
