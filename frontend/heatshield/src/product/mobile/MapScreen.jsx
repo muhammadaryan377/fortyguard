@@ -39,7 +39,7 @@ function newDraft(crew, site) {
   };
 }
 
-export default function MapScreen({ location, cycle, weather, heatmapState, analysisBusy, onNavigate }) {
+export default function MapScreen({ location, weather, heatmapState, analysisBusy, onNavigate }) {
   const sites = useMemo(() => loadSites(location), [location]);
   const selectedSiteId = useMemo(() => loadSelectedSiteId(sites), [sites]);
   const site = sites.find((item) => item.id === selectedSiteId) ?? sites[0];
@@ -99,12 +99,12 @@ export default function MapScreen({ location, cycle, weather, heatmapState, anal
   function moveWorker(workerId, point) {
     if (!pointInPolygon(point, site?.polygon ?? [])) {
       setError("Worker position must remain inside the selected site boundary.");
-      return;
+      return false;
     }
     const zone = zoneForPoint(site, point, ["work"]);
     if (!zone) {
       setError("Workers can only be moved to an active work zone. Use Plan for approved recovery/relocation alternatives.");
-      return;
+      return false;
     }
     persist(crew.map((worker) => worker.workerId === workerId ? {
       ...worker,
@@ -114,6 +114,7 @@ export default function MapScreen({ location, cycle, weather, heatmapState, anal
       allowedZoneIds: (worker.allowedZoneIds || []).filter((id) => id !== zone.id),
     } : worker));
     setError(null);
+    return true;
   }
 
   function saveWorker() {
