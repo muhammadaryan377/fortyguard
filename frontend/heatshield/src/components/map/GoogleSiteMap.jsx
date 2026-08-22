@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, MapPinned } from "lucide-react";
 
 let googleLoader;
@@ -19,6 +19,15 @@ function loadGoogleMaps() {
   return googleLoader;
 }
 
+function heatTemperature(feature) {
+  const properties = feature?.properties || {};
+  for (const key of ["average_temperature", "temperature", "value"]) {
+    const value = Number(properties[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
 function heatColor(value, minimum, maximum) {
   if (!Number.isFinite(value)) return "#94a3b8";
   const ratio = maximum === minimum ? .5 : Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum)));
@@ -32,15 +41,48 @@ function zoneStyle(type) {
   if (type === "recovery") return { strokeColor: "#16a34a", fillColor: "#22c55e", fillOpacity: .11 };
   if (type === "restricted") return { strokeColor: "#dc2626", fillColor: "#ef4444", fillOpacity: .09 };
   if (type === "transit") return { strokeColor: "#64748b", fillColor: "#94a3b8", fillOpacity: .07 };
-  return { strokeColor: "#2563eb", fillColor: "#3b82f6", fillOpacity: .09 };
+  return { strokeColor: "#f97316", fillColor: "#fb923c", fillOpacity: .09 };
 }
 
-export default function GoogleSiteMap({ site, crew, heatFeatures = [], heatVisible, mapType, onMapClick, onWorkerMove, selectedWorkerId, onSelectWorker }) {
+function heatPolygons(feature) {
+  const geometry = feature?.geometry;
+  if (geometry?.type === "Polygon") return [geometry.coordinates];
+  if (geometry?.type === "MultiPolygon") return geometry.coordinates || [];
+  return [];
+}
+
+export default function GoogleSiteMap({
+  site,
+  crew,
+  heatFeatures = [],
+  heatVisible,
+  mapType,
+  onMapClick,
+  onWorkerMove,
+  selectedWorkerId,
+  onSelectWorker,
+  workersDraggable = false,
+  inspectionPoint = null,
+}) {
   const nodeRef = useRef(null);
   const mapRef = useRef(null);
   const overlaysRef = useRef([]);
+  const callbacksRef = useRef({ onMapClick, onWorkerMove, onSelectWorker });
+  const viewportKeyRef = useRef(null);
   const [status, setStatus] = useState("loading");
-  const center = site?.polygon?.length ? site.polygon.reduce((sum, point) => ({ latitude: sum.latitude + Number(point.latitude) / site.polygon.length, longitude: sum.longitude + Number(point.longitude) / site.polygon.length }), { latitude: 0, longitude: 0 }) : { latitude: Number(site?.seedLatitude), longitude: Number(site?.seedLongitude) };
+  const center = useMemo(() => {
+    if (site?.polygon?.length) {
+      return site.polygon.reduce((sum, point) => ({
+        latitude: sum.latitude + Number(point.latitude) / site.polygon.length,
+        longitude: sum.longitude + Number(point.longitude) / site.polygon.length,
+      }), { latitude: 0, longitude: 0 });
+    }
+    return { latitude: Number(site?.seedLatitude), longitude: Number(site?.seedLongitude) };
+  }, [site]);
+
+  useEffect(() => {
+    callbacksRef.current = { onMapClick, onWorkerMove, onSelectWorker };
+  }, [onMapClick, onWorkerMove, onSelectWorker]);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,11 +98,14 @@ export default function GoogleSiteMap({ site, crew, heatFeatures = [], heatVisib
         clickableIcons: false,
         gestureHandling: "greedy",
       });
-      mapRef.current.addListener("click", (event) => onMapClick?.({ latitude: event.latLng.lat(), longitude: event.latLng.lng() }));
+      mapRef.current.addListener("click", (event) => callbacksRef.current.onMapClick?.({
+        latitude: event.latLng.lat(),
+        longitude: event.latLng.lng(),
+      }));
       setStatus("ready");
     }).catch(() => setStatus("error"));
     return () => { cancelled = true; };
-    // The map instance is intentionally created once; subsequent effects update its data and mode.
+    // Map creation intentionally happens once. Callback refs keep interaction current.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -68,28 +113,38 @@ export default function GoogleSiteMap({ site, crew, heatFeatures = [], heatVisib
 
   useEffect(() => {
     if (status !== "ready" || !window.google?.maps || !mapRef.current) return;
-    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
+    overlaysRef.current.forEach((overlay) => overlay.setMap?.(null));
     overlaysRef.current = [];
     const google = window.google;
     const bounds = new google.maps.LatLngBounds();
+    const infoWindow = new google.maps.InfoWindow();
 
-    const temperatures = heatFeatures.map((feature) => Number(feature?.properties?.temperature)).filter(Number.isFinite);
+    const temperatures = heatFeatures.map(heatTemperature).filter(Number.isFinite);
     const minimum = temperatures.length ? Math.min(...temperatures) : 0;
     const maximum = temperatures.length ? Math.max(...temperatures) : 0;
     if (heatVisible) heatFeatures.forEach((feature) => {
-      const ring = feature?.geometry?.coordinates?.[0];
-      if (!Array.isArray(ring)) return;
-      const temperature = Number(feature?.properties?.temperature);
-      const polygon = new google.maps.Polygon({
-        map: mapRef.current,
-        paths: ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) })),
-        strokeOpacity: 0,
-        fillColor: heatColor(temperature, minimum, maximum),
-        fillOpacity: .46,
-        clickable: false,
-        zIndex: 1,
+      const temperature = heatTemperature(feature);
+      heatPolygons(feature).forEach((rings) => {
+        if (!Array.isArray(rings?.[0])) return;
+        const polygon = new google.maps.Polygon({
+          map: mapRef.current,
+          paths: rings.map((ring) => ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }))),
+          strokeColor: "#ffffff",
+          strokeOpacity: .18,
+          strokeWeight: 1,
+          fillColor: heatColor(temperature, minimum, maximum),
+          fillOpacity: .46,
+          clickable: true,
+          zIndex: 1,
+        });
+        polygon.addListener("click", (event) => {
+          const label = Number.isFinite(temperature) ? `${temperature.toFixed(1)}°C / ${Math.round((temperature * 9) / 5 + 32)}°F` : "Temperature unavailable";
+          infoWindow.setContent(`<div style="font:600 12px system-ui;color:#20334a"><strong>FortyGuard TCM</strong><br/>${label}</div>`);
+          infoWindow.setPosition(event.latLng);
+          infoWindow.open({ map: mapRef.current });
+        });
+        overlaysRef.current.push(polygon);
       });
-      overlaysRef.current.push(polygon);
     });
 
     (site?.zones || []).filter((zone) => zone.active !== false && zone.polygon?.length >= 3).forEach((zone) => {
@@ -140,21 +195,44 @@ export default function GoogleSiteMap({ site, crew, heatFeatures = [], heatVisib
           className: "hs-google-worker-label",
         },
         title: `${worker.workerId} · ${worker.currentTask}${worker.zoneLabel ? ` · ${worker.zoneLabel}` : ""}`,
-        draggable: true,
+        draggable: workersDraggable,
         zIndex: selectedWorkerId === worker.workerId ? 20 : 10 + index,
       });
-      marker.addListener("click", () => onSelectWorker?.(worker.workerId));
-      marker.addListener("dragend", (event) => {
-        const accepted = onWorkerMove?.(worker.workerId, { latitude: event.latLng.lat(), longitude: event.latLng.lng() });
+      marker.addListener("click", () => callbacksRef.current.onSelectWorker?.(worker.workerId));
+      if (workersDraggable) marker.addListener("dragend", (event) => {
+        const accepted = callbacksRef.current.onWorkerMove?.(worker.workerId, {
+          latitude: event.latLng.lat(),
+          longitude: event.latLng.lng(),
+        });
         if (accepted === false) marker.setPosition(originalPosition);
       });
       overlaysRef.current.push(marker);
     });
 
-    if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 50);
-    // Event callbacks are rebound whenever the rendered map data changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [crew, heatFeatures, heatVisible, selectedWorkerId, site, status]);
+    if (inspectionPoint) {
+      const marker = new google.maps.Marker({
+        map: mapRef.current,
+        position: { lat: Number(inspectionPoint.latitude), lng: Number(inspectionPoint.longitude) },
+        title: "FortyGuard inspection point",
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 7,
+          fillColor: "#7c3aed",
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 3,
+        },
+        zIndex: 30,
+      });
+      overlaysRef.current.push(marker);
+    }
+
+    const viewportKey = `${site?.id || "site"}:${(site?.polygon || []).map((point) => `${point.latitude},${point.longitude}`).join(";")}`;
+    if (!bounds.isEmpty() && viewportKeyRef.current !== viewportKey) {
+      mapRef.current.fitBounds(bounds, 50);
+      viewportKeyRef.current = viewportKey;
+    }
+  }, [crew, heatFeatures, heatVisible, inspectionPoint, selectedWorkerId, site, status, workersDraggable]);
 
   return <div className="hs-google-map-shell"><div ref={nodeRef} className="hs-google-map" />{status === "loading" ? <div className="hs-map-cover"><LoaderCircle className="spinner"/> Loading Google Maps…</div> : null}{status === "error" ? <div className="hs-map-cover error"><MapPinned/>Google Maps unavailable. Check VITE_MAP and API restrictions.</div> : null}</div>;
 }
