@@ -41,7 +41,7 @@ function initializeSiteSetup(location) {
   } catch {
     intent = null;
   }
-  return { sites, selectedSiteId, mapMode: intent === "add" ? "draw" : "idle" };
+  return { sites, selectedSiteId, mapMode: intent === "add" ? "draw" : "idle", intent };
 }
 
 export default function SiteSetupScreen({ location, onNavigate }) {
@@ -54,12 +54,38 @@ export default function SiteSetupScreen({ location, onNavigate }) {
   const [localError, setLocalError] = useState(null);
 
   useEffect(() => {
+    let storedIntent = null;
+    try {
+      storedIntent = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY);
+      if (initialSetup.intent === "add" && storedIntent === "add") {
+        window.sessionStorage.setItem(SITE_SETUP_INTENT_KEY, "handled");
+      } else {
+        window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
+      }
+    } catch {
+      storedIntent = initialSetup.intent;
+    }
+
+    if (initialSetup.intent !== "add" || storedIntent !== "add") return;
+
+    const next = seedSite(location, `SITE-${Date.now()}`);
+    setSites((currentSites) => {
+      next.name = currentSites.some((site) => site.name === next.name) ? `${next.name} ${currentSites.length + 1}` : next.name;
+      const nextSites = [...currentSites, next];
+      saveSites(nextSites);
+      return nextSites;
+    });
+    setSelectedSiteId(next.id);
+    saveSelectedSiteId(next.id);
+    setActiveZoneId(null);
+    setMapMode("draw");
+    setLocalError(null);
     try {
       window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
     } catch {
-      // Navigation intent is optional; setup remains fully usable without storage.
+      // Intent cleanup is optional after the new site has been persisted.
     }
-  }, []);
+  }, [initialSetup.intent, location]);
 
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0] ?? null;
   const activeZone = selectedSite?.zones?.find((zone) => zone.id === activeZoneId) || null;
