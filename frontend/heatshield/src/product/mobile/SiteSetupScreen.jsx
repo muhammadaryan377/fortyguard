@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -33,15 +33,29 @@ function zoneTypeLabel(value) {
 }
 
 function initializeSiteSetup(location) {
-  const sites = loadSites(location);
-  const selectedSiteId = loadSelectedSiteId(sites);
-  let intent = null;
+  let sites = loadSites(location);
+  let selectedSiteId = loadSelectedSiteId(sites);
+  let mapMode = "idle";
+  let addRequested = false;
+
   try {
-    intent = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY);
+    addRequested = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY) === "add";
+    window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
   } catch {
-    intent = null;
+    addRequested = false;
   }
-  return { sites, selectedSiteId, mapMode: intent === "add" ? "draw" : "idle", intent };
+
+  if (addRequested) {
+    const next = seedSite(location, `SITE-${Date.now()}`);
+    next.name = sites.some((site) => site.name === next.name) ? `${next.name} ${sites.length + 1}` : next.name;
+    sites = [...sites, next];
+    selectedSiteId = next.id;
+    mapMode = "draw";
+    saveSites(sites);
+    saveSelectedSiteId(next.id);
+  }
+
+  return { sites, selectedSiteId, mapMode };
 }
 
 export default function SiteSetupScreen({ location, onNavigate }) {
@@ -52,40 +66,6 @@ export default function SiteSetupScreen({ location, onNavigate }) {
   const [activeZoneId, setActiveZoneId] = useState(null);
   const [newZoneType, setNewZoneType] = useState("work");
   const [localError, setLocalError] = useState(null);
-
-  useEffect(() => {
-    let storedIntent = null;
-    try {
-      storedIntent = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY);
-      if (initialSetup.intent === "add" && storedIntent === "add") {
-        window.sessionStorage.setItem(SITE_SETUP_INTENT_KEY, "handled");
-      } else {
-        window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
-      }
-    } catch {
-      storedIntent = initialSetup.intent;
-    }
-
-    if (initialSetup.intent !== "add" || storedIntent !== "add") return;
-
-    const next = seedSite(location, `SITE-${Date.now()}`);
-    setSites((currentSites) => {
-      next.name = currentSites.some((site) => site.name === next.name) ? `${next.name} ${currentSites.length + 1}` : next.name;
-      const nextSites = [...currentSites, next];
-      saveSites(nextSites);
-      return nextSites;
-    });
-    setSelectedSiteId(next.id);
-    saveSelectedSiteId(next.id);
-    setActiveZoneId(null);
-    setMapMode("draw");
-    setLocalError(null);
-    try {
-      window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
-    } catch {
-      // Intent cleanup is optional after the new site has been persisted.
-    }
-  }, [initialSetup.intent, location]);
 
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0] ?? null;
   const activeZone = selectedSite?.zones?.find((zone) => zone.id === activeZoneId) || null;
