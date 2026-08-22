@@ -32,18 +32,21 @@ function zoneTypeLabel(value) {
   return ZONE_TYPES.find((item) => item.value === value)?.label || value;
 }
 
+function readAddSiteIntent() {
+  try {
+    const requested = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY) === "add";
+    window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
+    return requested;
+  } catch {
+    return false;
+  }
+}
+
 function initializeSiteSetup(location) {
   let sites = loadSites(location);
   let selectedSiteId = loadSelectedSiteId(sites);
   let mapMode = "idle";
-  let addRequested = false;
-
-  try {
-    addRequested = window.sessionStorage.getItem(SITE_SETUP_INTENT_KEY) === "add";
-    window.sessionStorage.removeItem(SITE_SETUP_INTENT_KEY);
-  } catch {
-    addRequested = false;
-  }
+  const addRequested = readAddSiteIntent();
 
   if (addRequested) {
     const next = seedSite(location, `SITE-${Date.now()}`);
