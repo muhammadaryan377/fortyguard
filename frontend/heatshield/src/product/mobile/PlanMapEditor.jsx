@@ -1,44 +1,35 @@
-import { useEffect } from "react";
-import {
-  CircleMarker,
-  MapContainer,
-  Polygon,
-  TileLayer,
-  Tooltip,
-  useMap,
-  useMapEvents,
-} from "react-leaflet";
+import { useEffect, useRef, useState } from "react";
+import { LoaderCircle, MapPinned } from "lucide-react";
 
 import { polygonCenter } from "./planWorkspace.js";
 
-const ZONE_STYLE = {
-  work: { color: "#f97316", fillColor: "#fb923c", fillOpacity: 0.18, weight: 3 },
-  recovery: { color: "#16a34a", fillColor: "#4ade80", fillOpacity: 0.2, weight: 3 },
-  restricted: { color: "#dc2626", fillColor: "#f87171", fillOpacity: 0.14, weight: 3, dashArray: "7 5" },
-  transit: { color: "#64748b", fillColor: "#94a3b8", fillOpacity: 0.1, weight: 2, dashArray: "6 5" },
-};
-
-function MapViewport({ site }) {
-  const map = useMap();
-  useEffect(() => {
-    const points = site?.polygon ?? [];
-    if (points.length >= 3) {
-      map.fitBounds(points.map((point) => [point.latitude, point.longitude]), { padding: [24, 24] });
-    } else {
-      map.setView(polygonCenter(site), 17);
-    }
-  }, [map, site]);
-  return null;
+let googleLoader;
+function loadGoogleMaps() {
+  if (window.google?.maps) return Promise.resolve(window.google);
+  if (googleLoader) return googleLoader;
+  const key = import.meta.env.VITE_MAP;
+  if (!key) return Promise.reject(new Error("Google Maps API key is not configured."));
+  googleLoader = new Promise((resolve, reject) => {
+    const callback = `heatShieldPlanGoogleMaps_${Date.now()}`;
+    window[callback] = () => { delete window[callback]; resolve(window.google); };
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&callback=${callback}`;
+    script.async = true;
+    script.onerror = () => reject(new Error("Google Maps could not be loaded."));
+    document.head.appendChild(script);
+  });
+  return googleLoader;
 }
 
-function MapClickHandler({ enabled, onClick }) {
-  useMapEvents({
-    click(event) {
-      if (!enabled) return;
-      onClick?.({ latitude: event.latlng.lat, longitude: event.latlng.lng });
-    },
-  });
-  return null;
+const ZONE_STYLE = {
+  work: { strokeColor: "#f97316", fillColor: "#fb923c", fillOpacity: .15, strokeWeight: 3 },
+  recovery: { strokeColor: "#16a34a", fillColor: "#4ade80", fillOpacity: .17, strokeWeight: 3 },
+  restricted: { strokeColor: "#dc2626", fillColor: "#f87171", fillOpacity: .1, strokeWeight: 3 },
+  transit: { strokeColor: "#64748b", fillColor: "#94a3b8", fillOpacity: .08, strokeWeight: 2 },
+};
+
+function mapPoint(point) {
+  return { lat: Number(point.latitude), lng: Number(point.longitude) };
 }
 
 export default function PlanMapEditor({
@@ -50,81 +41,171 @@ export default function PlanMapEditor({
   onMapClick,
   height = 330,
 }) {
+  const nodeRef = useRef(null);
+  const mapRef = useRef(null);
+  const overlaysRef = useRef([]);
+  const clickHandlerRef = useRef(onMapClick);
+  const modeRef = useRef(mode);
+  const [status, setStatus] = useState("loading");
   const center = polygonCenter(site);
-  const polygonPositions = (site?.polygon ?? []).map((point) => [point.latitude, point.longitude]);
   const zones = site?.zones || [];
   const activeZone = zones.find((zone) => zone.id === activeZoneId) || null;
-  const activeZonePositions = (activeZone?.polygon || []).map((point) => [point.latitude, point.longitude]);
   const activeWorker = crew.find((worker) => worker.workerId === activeWorkerId) ?? null;
+
+  useEffect(() => { clickHandlerRef.current = onMapClick; }, [onMapClick]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadGoogleMaps().then((google) => {
+      if (cancelled || !nodeRef.current) return;
+      mapRef.current = new google.maps.Map(nodeRef.current, {
+        center: { lat: Number(center[0]), lng: Number(center[1]) },
+        zoom: 17,
+        mapTypeId: "roadmap",
+        mapTypeControl: true,
+        mapTypeControlOptions: {
+          style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+          mapTypeIds: ["roadmap", "satellite"],
+        },
+        streetViewControl: false,
+        fullscreenControl: true,
+        clickableIcons: false,
+        gestureHandling: "greedy",
+      });
+      mapRef.current.addListener("click", (event) => {
+        if (!["draw", "zone", "worker"].includes(modeRef.current)) return;
+        clickHandlerRef.current?.({ latitude: event.latLng.lat(), longitude: event.latLng.lng() });
+      });
+      setStatus("ready");
+    }).catch(() => setStatus("error"));
+    return () => { cancelled = true; };
+    // Map instance is created once and redrawn from React state below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (status !== "ready" || !window.google?.maps || !mapRef.current) return;
+    const google = window.google;
+    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
+    overlaysRef.current = [];
+    const bounds = new google.maps.LatLngBounds();
+    const masterPoints = (site?.polygon || []).map(mapPoint);
+
+    if (masterPoints.length >= 2 && masterPoints.length < 3) {
+      const line = new google.maps.Polyline({ map: mapRef.current, path: masterPoints, strokeColor: "#2563eb", strokeWeight: 3, zIndex: 3 });
+      overlaysRef.current.push(line);
+    }
+    if (masterPoints.length >= 3) {
+      const polygon = new google.maps.Polygon({
+        map: mapRef.current,
+        paths: masterPoints,
+        strokeColor: "#2563eb",
+        fillColor: "#60a5fa",
+        strokeWeight: 3,
+        fillOpacity: .055,
+        clickable: false,
+        zIndex: 3,
+      });
+      overlaysRef.current.push(polygon);
+    }
+    masterPoints.forEach((point) => bounds.extend(point));
+
+    zones.forEach((zone) => {
+      const points = (zone.polygon || []).map(mapPoint);
+      const style = ZONE_STYLE[zone.type] || ZONE_STYLE.transit;
+      if (points.length >= 2 && points.length < 3) {
+        const line = new google.maps.Polyline({
+          map: mapRef.current,
+          path: points,
+          strokeColor: style.strokeColor,
+          strokeWeight: style.strokeWeight,
+          strokeOpacity: zone.active ? 1 : .4,
+          zIndex: 4,
+        });
+        overlaysRef.current.push(line);
+      }
+      if (points.length >= 3) {
+        const polygon = new google.maps.Polygon({
+          map: mapRef.current,
+          paths: points,
+          strokeColor: style.strokeColor,
+          fillColor: style.fillColor,
+          strokeWeight: style.strokeWeight,
+          strokeOpacity: zone.active ? 1 : .42,
+          fillOpacity: zone.active ? style.fillOpacity : .035,
+          clickable: false,
+          zIndex: 4,
+        });
+        overlaysRef.current.push(polygon);
+      }
+    });
+
+    if (mode === "draw") {
+      masterPoints.forEach((point, index) => {
+        const marker = new google.maps.Marker({
+          map: mapRef.current,
+          position: point,
+          label: { text: String(index + 1), color: "#ffffff", fontSize: "10px", fontWeight: "700" },
+          title: `Master boundary point ${index + 1}`,
+          zIndex: 20,
+        });
+        overlaysRef.current.push(marker);
+      });
+    }
+
+    if (mode === "zone") {
+      const points = (activeZone?.polygon || []).map(mapPoint);
+      points.forEach((point, index) => {
+        const marker = new google.maps.Marker({
+          map: mapRef.current,
+          position: point,
+          label: { text: String(index + 1), color: "#ffffff", fontSize: "10px", fontWeight: "700" },
+          title: `${activeZone?.name || "Zone"} point ${index + 1}`,
+          zIndex: 21,
+        });
+        overlaysRef.current.push(marker);
+      });
+    }
+
+    crew.forEach((worker, index) => {
+      if (!worker.position) return;
+      const position = mapPoint(worker.position);
+      bounds.extend(position);
+      const selected = activeWorkerId === worker.workerId;
+      const marker = new google.maps.Marker({
+        map: mapRef.current,
+        position,
+        label: {
+          text: `${index + 1} · ${worker.name || worker.workerId}`,
+          color: selected ? "#0f172a" : "#172033",
+          fontSize: selected ? "12px" : "11px",
+          fontWeight: "700",
+          className: "hs-google-worker-label",
+        },
+        title: `${worker.workerId} · ${worker.zoneLabel || "work zone"}`,
+        zIndex: selected ? 30 : 10 + index,
+      });
+      overlaysRef.current.push(marker);
+    });
+
+    if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 44);
+    else mapRef.current.setCenter({ lat: Number(center[0]), lng: Number(center[1]) });
+  }, [activeWorkerId, activeZone, center, crew, mode, site, status, zones]);
 
   return (
     <div className={`hs-advanced-map mode-${mode}`}>
-      <MapContainer
-        center={center}
-        zoom={17}
-        scrollWheelZoom
-        className="hs-advanced-leaflet"
-        style={{ height }}
-      >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <MapViewport site={site} />
-        <MapClickHandler enabled={["draw", "zone", "worker"].includes(mode)} onClick={onMapClick} />
-
-        {polygonPositions.length >= 3 ? (
-          <Polygon positions={polygonPositions} pathOptions={{ color: "#2563eb", fillColor: "#60a5fa", weight: 3, fillOpacity: 0.055 }}>
-            <Tooltip sticky>Master site boundary</Tooltip>
-          </Polygon>
-        ) : null}
-
-        {zones.map((zone) => {
-          const positions = (zone.polygon || []).map((point) => [point.latitude, point.longitude]);
-          if (positions.length < 3) return null;
-          const base = ZONE_STYLE[zone.type] || ZONE_STYLE.transit;
-          return (
-            <Polygon
-              key={zone.id}
-              positions={positions}
-              pathOptions={{ ...base, opacity: zone.active ? 1 : 0.42, fillOpacity: zone.active ? base.fillOpacity : 0.04 }}
-            >
-              <Tooltip sticky>{zone.name} · {zone.type}{zone.active ? "" : " · inactive"}</Tooltip>
-            </Polygon>
-          );
-        })}
-
-        {mode === "draw" ? polygonPositions.map((position, index) => (
-          <CircleMarker key={`vertex-${index}`} center={position} radius={5} pathOptions={{ color: "#2563eb", weight: 2 }}>
-            <Tooltip direction="top">Boundary {index + 1}</Tooltip>
-          </CircleMarker>
-        )) : null}
-
-        {mode === "zone" ? activeZonePositions.map((position, index) => (
-          <CircleMarker key={`zone-vertex-${index}`} center={position} radius={5} pathOptions={{ color: ZONE_STYLE[activeZone?.type]?.color || "#f97316", weight: 2 }}>
-            <Tooltip direction="top">{activeZone?.name || "Zone"} point {index + 1}</Tooltip>
-          </CircleMarker>
-        )) : null}
-
-        {crew.map((worker, index) => worker.position ? (
-          <CircleMarker
-            key={worker.workerId}
-            center={[worker.position.latitude, worker.position.longitude]}
-            radius={activeWorkerId === worker.workerId ? 10 : 8}
-            pathOptions={{ color: activeWorkerId === worker.workerId ? "#0f172a" : "#2563eb", weight: activeWorkerId === worker.workerId ? 4 : 2 }}
-          >
-            <Tooltip permanent direction="top" offset={[0, -8]}>
-              {index + 1} · {worker.name || worker.workerId}
-            </Tooltip>
-          </CircleMarker>
-        ) : null)}
-      </MapContainer>
+      <div style={{ position: "relative", height }}>
+        <div ref={nodeRef} className="hs-advanced-leaflet" style={{ height: "100%" }} />
+        {status === "loading" ? <div className="hs-map-cover"><LoaderCircle className="spinner" /> Loading Google Maps…</div> : null}
+        {status === "error" ? <div className="hs-map-cover error"><MapPinned /> Google Maps unavailable. Check VITE_MAP and API restrictions.</div> : null}
+      </div>
       <div className="hs-advanced-map-status">
-        {mode === "draw" ? "Master boundary mode: tap around the outside edge of the full property/site." : null}
-        {mode === "zone" ? `Zone drawing: tap inside the master boundary to define ${activeZone?.name || "the selected operational zone"}.` : null}
-        {mode === "worker" ? `Worker placement: tap inside ${activeWorker?.zoneLabel || "the assigned work zone"} to place ${activeWorker?.name || activeWorkerId || "the selected worker"}.` : null}
-        {mode === "idle" && crew.length ? `${polygonPositions.length >= 3 ? "Master site locked" : "Site boundary incomplete"} · ${zones.filter((zone) => zone.active && zone.polygon?.length >= 3).length} active zones · ${crew.filter((worker) => worker.position).length}/${crew.length} worker positions.` : null}
-        {mode === "idle" && !crew.length ? (polygonPositions.length >= 3 ? `${zones.filter((zone) => zone.active && zone.polygon?.length >= 3).length} operational zones inside the master site.` : "Draw the master site boundary first.") : null}
+        {mode === "draw" ? "Master boundary mode: click around the outside edge of the full property/site. Use Satellite when the property edge is easier to see." : null}
+        {mode === "zone" ? `Zone drawing: click inside the master boundary to define ${activeZone?.name || "the selected operational zone"}.` : null}
+        {mode === "worker" ? `Worker placement: click inside ${activeWorker?.zoneLabel || "the assigned work zone"} to place ${activeWorker?.name || activeWorkerId || "the selected worker"}.` : null}
+        {mode === "idle" && crew.length ? `${site?.polygon?.length >= 3 ? "Master site locked" : "Site boundary incomplete"} · ${zones.filter((zone) => zone.active && zone.polygon?.length >= 3).length} active zones · ${crew.filter((worker) => worker.position).length}/${crew.length} worker positions.` : null}
+        {mode === "idle" && !crew.length ? (site?.polygon?.length >= 3 ? `${zones.filter((zone) => zone.active && zone.polygon?.length >= 3).length} operational zones inside the master site.` : "Draw the master site boundary first.") : null}
       </div>
     </div>
   );
