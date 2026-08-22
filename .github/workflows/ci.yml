@@ -36,7 +36,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -47,6 +47,7 @@ jobs:
         run: >-
           npx eslint
           src/api/decisionIntelligenceApi.js
+          src/api/mapIntelligenceApi.js
           src/api/sitePlanApi.js
           src/components/map/GoogleSiteMap.jsx
           src/product/mobile/SiteSetupScreen.jsx
@@ -54,6 +55,7 @@ jobs:
           src/product/mobile/DecisionComparisonStrip.jsx
           src/product/mobile/DecisionTwinMap.jsx
           src/product/mobile/DecisionWorkbench.jsx
+          src/product/mobile/MapIntelligencePanel.jsx
           src/product/mobile/MapScreen.jsx
           src/product/mobile/PlanMapEditor.jsx
           src/product/mobile/PlanScreen.jsx
