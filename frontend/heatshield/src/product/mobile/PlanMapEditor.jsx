@@ -39,12 +39,14 @@ export default function PlanMapEditor({
   activeWorkerId = null,
   activeZoneId = null,
   onMapClick,
+  onVertexMove,
   height = 330,
 }) {
   const nodeRef = useRef(null);
   const mapRef = useRef(null);
   const overlaysRef = useRef([]);
   const clickHandlerRef = useRef(onMapClick);
+  const vertexMoveRef = useRef(onVertexMove);
   const modeRef = useRef(mode);
   const [status, setStatus] = useState("loading");
   const center = polygonCenter(site);
@@ -53,6 +55,7 @@ export default function PlanMapEditor({
   const activeWorker = crew.find((worker) => worker.workerId === activeWorkerId) ?? null;
 
   useEffect(() => { clickHandlerRef.current = onMapClick; }, [onMapClick]);
+  useEffect(() => { vertexMoveRef.current = onVertexMove; }, [onVertexMove]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
   useEffect(() => {
@@ -147,8 +150,16 @@ export default function PlanMapEditor({
           map: mapRef.current,
           position: point,
           label: { text: String(index + 1), color: "#ffffff", fontSize: "10px", fontWeight: "700" },
-          title: `Master boundary point ${index + 1}`,
+          title: `Master boundary point ${index + 1} · drag to edit`,
+          draggable: true,
           zIndex: 20,
+        });
+        marker.addListener("dragend", (event) => {
+          const accepted = vertexMoveRef.current?.("site", index, {
+            latitude: event.latLng.lat(),
+            longitude: event.latLng.lng(),
+          });
+          if (accepted === false) marker.setPosition(point);
         });
         overlaysRef.current.push(marker);
       });
@@ -161,8 +172,16 @@ export default function PlanMapEditor({
           map: mapRef.current,
           position: point,
           label: { text: String(index + 1), color: "#ffffff", fontSize: "10px", fontWeight: "700" },
-          title: `${activeZone?.name || "Zone"} point ${index + 1}`,
+          title: `${activeZone?.name || "Zone"} point ${index + 1} · drag to edit`,
+          draggable: true,
           zIndex: 21,
+        });
+        marker.addListener("dragend", (event) => {
+          const accepted = vertexMoveRef.current?.("zone", index, {
+            latitude: event.latLng.lat(),
+            longitude: event.latLng.lng(),
+          }, activeZone?.id);
+          if (accepted === false) marker.setPosition(point);
         });
         overlaysRef.current.push(marker);
       });
@@ -201,8 +220,8 @@ export default function PlanMapEditor({
         {status === "error" ? <div className="hs-map-cover error"><MapPinned /> Google Maps unavailable. Check VITE_MAP and API restrictions.</div> : null}
       </div>
       <div className="hs-advanced-map-status">
-        {mode === "draw" ? "Master boundary mode: click around the outside edge of the full property/site. Use Satellite when the property edge is easier to see." : null}
-        {mode === "zone" ? `Zone drawing: click inside the master boundary to define ${activeZone?.name || "the selected operational zone"}.` : null}
+        {mode === "draw" ? "Master boundary mode: click to add points or drag numbered vertices to correct the property edge. Use Satellite when the property edge is easier to see." : null}
+        {mode === "zone" ? `Zone drawing: click to add points or drag numbered vertices inside the master boundary for ${activeZone?.name || "the selected operational zone"}.` : null}
         {mode === "worker" ? `Worker placement: click inside ${activeWorker?.zoneLabel || "the assigned work zone"} to place ${activeWorker?.name || activeWorkerId || "the selected worker"}.` : null}
         {mode === "idle" && crew.length ? `${site?.polygon?.length >= 3 ? "Master site locked" : "Site boundary incomplete"} · ${zones.filter((zone) => zone.active && zone.polygon?.length >= 3).length} active zones · ${crew.filter((worker) => worker.position).length}/${crew.length} worker positions.` : null}
         {mode === "idle" && !crew.length ? (site?.polygon?.length >= 3 ? `${zones.filter((zone) => zone.active && zone.polygon?.length >= 3).length} operational zones inside the master site.` : "Draw the master site boundary first.") : null}
