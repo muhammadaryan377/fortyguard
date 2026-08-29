@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.models.fortyguard import PolygonFeatureCollection
 from app.models.optimization import (
     ShiftOptimizationResponse,
     ShiftTaskPlan,
@@ -165,6 +166,7 @@ class HeatShieldCycleRequest(StrictModel):
         ge=100,
         le=1500,
     )
+    operational_polygon: PolygonFeatureCollection | None = None
 
     include_shift_optimization: bool = False
     shift_tasks: list[ShiftTaskPlan] | None = Field(

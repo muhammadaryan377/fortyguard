@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from math import cos, radians
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.config import settings
 from app.models.fortyguard import (
@@ -238,6 +239,44 @@ def _parse_provider_timestamp(value: str | None) -> datetime | None:
     return parsed.replace(tzinfo=None)
 
 
+def canonical_observation_timestamp(provider_timestamp: str, timezone_name: str) -> datetime:
+    """Attach the site timezone to a provider-local wall time and fail closed at DST edges.
+
+    FortyGuard observations can carry an offset that does not match the site's
+    civil-time offset for that date. HeatShield preserves that raw provider value
+    in provenance but uses the requested site's IANA timezone as the canonical
+    observation instant. Ambiguous and nonexistent local wall times are rejected
+    instead of silently choosing a DST fold.
+    """
+
+    wall_time = _parse_provider_timestamp(provider_timestamp)
+    if wall_time is None:
+        raise TimestampMismatchError("Provider timestamp could not be parsed")
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise TimestampMismatchError("Site timezone is invalid") from exc
+
+    candidates: list[datetime] = []
+    seen_offsets = set()
+    for fold in (0, 1):
+        candidate = wall_time.replace(tzinfo=timezone, fold=fold)
+        round_trip = candidate.astimezone(UTC).astimezone(timezone)
+        if round_trip.replace(tzinfo=None) != wall_time:
+            continue
+        offset = candidate.utcoffset()
+        if offset in seen_offsets:
+            continue
+        seen_offsets.add(offset)
+        candidates.append(candidate)
+
+    if not candidates:
+        raise TimestampMismatchError("Provider timestamp falls in a nonexistent site-local time")
+    if len(candidates) > 1:
+        raise TimestampMismatchError("Provider timestamp falls in an ambiguous site-local time")
+    return candidates[0]
+
+
 def match_single_observation(
     observations: list[EnvironmentalConditions],
     *,
@@ -275,14 +314,8 @@ async def get_live_environment(
     timezone_name: str | None = None,
     client: FortyGuardClient = fortyguard_client,
 ) -> EnvironmentalConditions:
-    """Fetch one validated provider observation for the requested site/hour.
+    """Fetch one validated provider observation for the requested site/hour."""
 
-    ``timezone_name`` is accepted for orchestration compatibility. FortyGuard
-    environmental timestamps are intentionally matched as provider-local wall
-    time, so the value is not used to shift the requested hour here.
-    """
-
-    _ = timezone_name
     verified = await get_verified_temperature(location, date_time, client=client)
     environment_request = EnvironmentalParametersRequest(
         latitude=location.latitude,
@@ -296,6 +329,14 @@ async def get_live_environment(
     selected = match_single_observation(
         observations, location=location, date_time=date_time
     )
+    provider_timestamp = selected.timestamp or ""
+    canonical = (
+        canonical_observation_timestamp(provider_timestamp, timezone_name)
+        if timezone_name
+        else None
+    )
+    if canonical is not None:
+        selected.timestamp = canonical.isoformat()
     selected.temperature_c = verified.temperature_c
     selected.provenance = EnvironmentalProvenance(
         temperature_source="fortyguard_heatmap",
@@ -303,7 +344,9 @@ async def get_live_environment(
         heatmap_activity_id=verified.activity_id,
         environment_activity_id=environment_activity_id,
         requested_timestamp=verified.timestamp,
-        matched_provider_timestamp=selected.timestamp or "",
+        matched_provider_timestamp=provider_timestamp,
+        site_timezone_name=timezone_name,
+        canonical_observation_timestamp=selected.timestamp if canonical is not None else None,
         temperature_extraction_method=verified.extraction_method,
     )
     provider_metadata = selected.raw.get("metadata", {})

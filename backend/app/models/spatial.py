@@ -8,8 +8,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.risk import USSiteLocation
 from app.core.config import settings
+from app.models.fortyguard import PolygonFeatureCollection
+from app.models.risk import USSiteLocation
 
 
 class SpatialHeatRequest(BaseModel):
@@ -19,11 +20,13 @@ class SpatialHeatRequest(BaseModel):
     search_radius_meters: int = Field(default=400, ge=100, le=1500)
     granularity: Literal[60, 80, 100] = settings.heatshield_live_granularity_meters
     max_candidates: int = Field(default=3, ge=1, le=5)
+    operational_polygon: PolygonFeatureCollection | None = None
 
     @field_validator("timezone_name")
     @classmethod
     def valid_timezone(cls, value: str) -> str:
-        try: ZoneInfo(value)
+        try:
+            ZoneInfo(value)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError("timezone_name must be a valid IANA timezone") from exc
         return value
@@ -37,6 +40,7 @@ class SpatialHeatTile(BaseModel):
     centroid_longitude: float
     contains_site: bool
     straight_line_distance_m: float
+    inside_operational_boundary: bool | None = None
 
 
 class CoolerZoneCandidate(BaseModel):
@@ -50,6 +54,7 @@ class CoolerZoneCandidate(BaseModel):
     straight_line_distance_m: float
     polygon_coordinates: list[list[list[float]]]
     rank: int
+    inside_operational_boundary: bool | None = None
     evidence_source: Literal["fortyguard_heatmap"] = "fortyguard_heatmap"
     analytic_type: Literal["tcm"] = "tcm"
     limitations: list[str]

@@ -1,7 +1,8 @@
-"""One-site/many-worker deterministic orchestration without model fan-out."""
+"""One-site/many-worker deterministic orchestration with shared provider evidence."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Callable
 from uuid import uuid4
@@ -29,6 +30,7 @@ from app.models.site import (
     SiteWorkerAssignment,
     SiteWorkerPosition,
     SiteWorkerSnapshot,
+    SiteZoneType,
 )
 from app.models.spatial import SpatialHeatRequest, SpatialHeatResponse, SpatialHeatSummary, SpatialSiteReference
 from app.services.agent_decision import available_agent_capabilities
@@ -49,7 +51,8 @@ from app.services.live_environment import (
 from app.services.predictive_heat import create_heat_outlook
 from app.services.risk_engine import assess_risk
 from app.services.shift_optimizer import optimize_shift
-from app.services.spatial_heat import create_spatial_heat
+from app.services.site_shared_evidence import create_worker_outlooks_from_site_maps
+from app.services.spatial_heat import analyze_spatial_features, create_spatial_heat
 from app.services.state_store import HeatShieldStateStore
 
 
@@ -86,21 +89,24 @@ def unavailable_optimization(worker_id: str, now: datetime) -> ShiftOptimization
         worker_id=worker_id,
         generated_at=now,
         sample_offsets_considered=[],
-        current_plan=CurrentShiftPlanSummary(
-            status="unavailable",
-            safe_reason="Shift optimization was unavailable.",
-        ),
+        current_plan=CurrentShiftPlanSummary(status="unavailable", safe_reason="Shift optimization was unavailable."),
         candidates=[],
         best_candidate=None,
         limitations=["Shift optimization was unavailable; no schedule candidate was fabricated."],
     )
 
 
-def unavailable_spatial(request: SiteOperationsRequest, now: datetime) -> SpatialHeatResponse:
+def unavailable_spatial(
+    request: SiteOperationsRequest,
+    now: datetime,
+    *,
+    location: USSiteLocation | None = None,
+    reason: str = "Spatial provider evidence was unavailable; no cooler zone candidate was created.",
+) -> SpatialHeatResponse:
     return SpatialHeatResponse(
         status="insufficient_data",
         generated_at=now,
-        location=request.location,
+        location=location or request.location,
         timezone_name=request.timezone_name,
         search_radius_meters=request.spatial_search_radius_meters,
         granularity=settings.heatshield_live_granularity_meters,
@@ -108,21 +114,14 @@ def unavailable_spatial(request: SiteOperationsRequest, now: datetime) -> Spatia
         tiles=[],
         candidates=[],
         summary=SpatialHeatSummary(valid_tile_count=0, cooler_candidate_count=0),
-        limitations=["Spatial provider evidence was unavailable; no cooler zone candidate was created."],
+        limitations=[reason],
     )
 
 
 def analysis_anchor(request: SiteOperationsRequest, clock_value: datetime) -> datetime:
     source = request.analysis_datetime if request.analysis_datetime is not None else clock_value
-    if source.tzinfo is None:
-        source = source.replace(tzinfo=UTC)
-    else:
-        source = source.astimezone(UTC)
-    local = source.astimezone(ZoneInfo(request.timezone_name)).replace(
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
+    source = source.replace(tzinfo=UTC) if source.tzinfo is None else source.astimezone(UTC)
+    local = source.astimezone(ZoneInfo(request.timezone_name)).replace(minute=0, second=0, microsecond=0)
     return local.astimezone(UTC)
 
 
@@ -147,10 +146,39 @@ def location_for_position(
 
 
 def polygon_for_request(request: SiteOperationsRequest) -> PolygonFeatureCollection:
-    return request.site_polygon or build_site_polygon(
-        request.location.latitude,
-        request.location.longitude,
-    )
+    return request.site_polygon or build_site_polygon(request.location.latitude, request.location.longitude)
+
+
+def zone_map(request: SiteOperationsRequest):
+    return {zone.zone_id: zone for zone in request.operational_zones}
+
+
+def candidate_polygon_for_assignment(
+    request: SiteOperationsRequest,
+    assignment: SiteWorkerAssignment,
+) -> PolygonFeatureCollection | None:
+    if not request.operational_zones or not assignment.spatial_relocation_allowed:
+        return None
+    zones = zone_map(request)
+    ids = [assignment.worker.zone_id, *assignment.allowed_zone_ids]
+    features = []
+    seen: set[str] = set()
+    for zone_id in ids:
+        if not zone_id or zone_id in seen:
+            continue
+        seen.add(zone_id)
+        zone = zones.get(zone_id)
+        if (
+            zone is None
+            or not zone.active
+            or not zone.relocation_allowed
+            or zone.zone_type not in {SiteZoneType.WORK, SiteZoneType.RECOVERY}
+        ):
+            continue
+        features.extend(zone.polygon.features)
+    if not features:
+        return None
+    return PolygonFeatureCollection(type="FeatureCollection", features=features)
 
 
 async def fetch_site_heatmap(
@@ -159,13 +187,10 @@ async def fetch_site_heatmap(
     *,
     client: FortyGuardClient,
 ) -> tuple[str, int, dict, int]:
-    """Fetch one TCM map for the submitted site AOI, with the verified 100 m fallback."""
-
     requested = int(request.heatmap_granularity)
     candidates = [requested] if requested == 100 else [requested, 100]
     attempts = 0
     last_error: Exception | None = None
-
     for granularity in candidates:
         attempts += 1
         try:
@@ -186,7 +211,6 @@ async def fetch_site_heatmap(
             return activity_id, granularity, map_data, attempts
         except Exception as exc:
             last_error = exc
-
     if last_error is not None:
         raise last_error
     raise ValueError("FortyGuard heatmap did not provide site spatial evidence")
@@ -211,7 +235,6 @@ async def environment_from_site_heatmap(
         activity_id=heatmap_activity_id,
     )
     verified.raw["granularity_meters"] = granularity
-
     environment_activity_id = await client.get_environmental_parameters(
         EnvironmentalParametersRequest(
             latitude=location.latitude,
@@ -222,11 +245,7 @@ async def environment_from_site_heatmap(
     )
     job = await client.wait_for_result(environment_activity_id)
     observations = normalize_environmental_result(job.result or {})
-    selected = match_single_observation(
-        observations,
-        location=location,
-        date_time=date_time,
-    )
+    selected = match_single_observation(observations, location=location, date_time=date_time)
     selected.temperature_c = verified.temperature_c
     selected.provenance = EnvironmentalProvenance(
         temperature_source="fortyguard_heatmap",
@@ -263,11 +282,16 @@ class SiteOperationsOrchestrator:
         now = analysis_anchor(request, self.clock())
         date_time = _current_filter(now, request.timezone_name)
         snapshot_id = str(uuid4())
+        zoned = bool(request.operational_zones)
         limitations = [
             "Operational attention ordering is not a total occupational heat-risk score.",
             "The site snapshot is deterministic and makes no DeepSeek calls.",
-            "Worker environmental evidence is evaluated at the submitted worker coordinates when provided.",
         ]
+        if zoned:
+            limitations.extend([
+                "One master-site heatmap is reused for current worker tile extraction; environmental-parameter jobs remain worker-specific.",
+                "Forecast provider jobs scale with sample count, not worker count: one full-site heatmap per requested forecast offset.",
+            ])
 
         site_heatmap_activity_id: str | None = None
         site_heatmap_granularity: int | None = None
@@ -276,20 +300,19 @@ class SiteOperationsOrchestrator:
         center_environment_fetches = 0
         worker_environment_fetches = 0
 
-        try:
-            (
-                site_heatmap_activity_id,
-                site_heatmap_granularity,
-                site_heatmap_map_data,
-                site_heatmap_requests,
-            ) = await fetch_site_heatmap(request, date_time, client=self.client)
-        except Exception:
-            limitations.append(
-                "The submitted site polygon heatmap was unavailable; point-specific provider fallbacks were used where possible."
-            )
+        if zoned:
+            try:
+                (
+                    site_heatmap_activity_id,
+                    site_heatmap_granularity,
+                    site_heatmap_map_data,
+                    site_heatmap_requests,
+                ) = await fetch_site_heatmap(request, date_time, client=self.client)
+            except Exception:
+                limitations.append("The master-site heatmap was unavailable; point-specific provider fallbacks were used where possible.")
 
         try:
-            if site_heatmap_map_data is not None and site_heatmap_activity_id is not None and site_heatmap_granularity is not None:
+            if zoned and site_heatmap_map_data is not None and site_heatmap_activity_id is not None and site_heatmap_granularity is not None:
                 environment = await environment_from_site_heatmap(
                     request=request,
                     location=request.location,
@@ -299,7 +322,6 @@ class SiteOperationsOrchestrator:
                     granularity=site_heatmap_granularity,
                     client=self.client,
                 )
-                center_environment_fetches += 1
             else:
                 environment = await get_live_environment(
                     request.location,
@@ -307,33 +329,42 @@ class SiteOperationsOrchestrator:
                     timezone_name=request.timezone_name,
                     client=self.client,
                 )
-                center_environment_fetches += 1
+            center_environment_fetches += 1
             environment = environment.model_copy(update={"raw": {}})
         except Exception:
-            environment = EnvironmentalConditions(
-                location=request.location.model_dump(),
-                timestamp=now.isoformat(),
-            )
-            limitations.append(
-                "Shared current provider evidence was unavailable; no environmental value was fabricated."
-            )
+            environment = EnvironmentalConditions(location=request.location.model_dump(), timestamp=now.isoformat())
+            limitations.append("Shared current provider evidence was unavailable; no environmental value was fabricated.")
 
-        outlook = None
+        worker_outlooks = {}
+        prediction_heatmap_requests = 0
+        legacy_outlook = None
         if request.include_prediction:
-            outlook = await create_heat_outlook(
-                PredictHeatOutlookRequest(
-                    location=request.location,
-                    timezone_name=request.timezone_name,
-                    offset_hours=request.forecast_offset_hours,
-                ),
-                client=self.client,
-                now=now,
-            )
-
-        spatial = None
-        if request.include_spatial_intelligence:
             try:
-                spatial = await create_spatial_heat(
+                if zoned:
+                    worker_outlooks, prediction_heatmap_requests = await create_worker_outlooks_from_site_maps(
+                        request,
+                        client=self.client,
+                        now=now,
+                    )
+                else:
+                    legacy_outlook = await create_heat_outlook(
+                        PredictHeatOutlookRequest(
+                            location=request.location,
+                            timezone_name=request.timezone_name,
+                            offset_hours=request.forecast_offset_hours,
+                        ),
+                        client=self.client,
+                        now=now,
+                    )
+                    worker_outlooks = {item.worker.worker_id: legacy_outlook for item in request.assignments}
+                    prediction_heatmap_requests = len(request.forecast_offset_hours)
+            except Exception:
+                limitations.append("Forecast evidence was unavailable; no future temperature was fabricated.")
+
+        legacy_spatial = None
+        if request.include_spatial_intelligence and not zoned:
+            try:
+                legacy_spatial = await create_spatial_heat(
                     SpatialHeatRequest(
                         location=request.location,
                         timezone_name=request.timezone_name,
@@ -345,82 +376,125 @@ class SiteOperationsOrchestrator:
                     clock=lambda: now,
                 )
             except Exception:
-                spatial = unavailable_spatial(request, now)
+                legacy_spatial = unavailable_spatial(request, now)
 
-        workers: list[SiteWorkerSnapshot] = []
-        optimization_count = 0
-
-        for assignment in request.assignments:
+        async def fetch_worker_environment(assignment: SiteWorkerAssignment):
             worker_location = location_for_position(
                 request.location,
                 assignment.position,
                 worker_id=assignment.worker.worker_id,
             )
-            worker_environment = environment
+            if assignment.position is None or not zoned:
+                return assignment.worker.worker_id, environment, False
+            try:
+                if site_heatmap_map_data is not None and site_heatmap_activity_id is not None and site_heatmap_granularity is not None:
+                    worker_environment = await environment_from_site_heatmap(
+                        request=request,
+                        location=worker_location,
+                        date_time=date_time,
+                        map_data=site_heatmap_map_data,
+                        heatmap_activity_id=site_heatmap_activity_id,
+                        granularity=site_heatmap_granularity,
+                        client=self.client,
+                    )
+                else:
+                    worker_environment = await get_live_environment(
+                        worker_location,
+                        date_time,
+                        timezone_name=request.timezone_name,
+                        client=self.client,
+                    )
+                return assignment.worker.worker_id, worker_environment.model_copy(update={"raw": {}}), True
+            except Exception:
+                fallback = EnvironmentalConditions(location=worker_location.model_dump(), timestamp=now.isoformat())
+                return assignment.worker.worker_id, fallback, True
 
-            if assignment.position is not None:
-                try:
+        worker_environment_rows = await asyncio.gather(
+            *[fetch_worker_environment(assignment) for assignment in request.assignments]
+        )
+        worker_environments = {worker_id: value for worker_id, value, _ in worker_environment_rows}
+        worker_environment_fetches = sum(int(attempted) for _, _, attempted in worker_environment_rows)
+
+        zones = zone_map(request)
+        workers: list[SiteWorkerSnapshot] = []
+        optimization_count = 0
+        worker_spatials: dict[str, SpatialHeatResponse] = {}
+
+        for assignment in request.assignments:
+            worker_id = assignment.worker.worker_id
+            worker_location = location_for_position(request.location, assignment.position, worker_id=worker_id)
+            worker_environment = worker_environments.get(worker_id, environment)
+            if worker_environment.temperature_c is None:
+                limitations.append(f"Worker {worker_id} provider evidence was unavailable at the submitted position.")
+            assessment = assess_risk(worker_environment, assignment.worker, assignment.task, now=now)
+            worker_outlook = worker_outlooks.get(worker_id)
+
+            worker_spatial = None
+            if request.include_spatial_intelligence:
+                if not zoned:
+                    worker_spatial = legacy_spatial
+                else:
+                    operational_polygon = candidate_polygon_for_assignment(request, assignment)
                     if (
                         site_heatmap_map_data is not None
                         and site_heatmap_activity_id is not None
-                        and site_heatmap_granularity is not None
+                        and assignment.spatial_relocation_allowed
+                        and operational_polygon is not None
                     ):
-                        worker_environment = await environment_from_site_heatmap(
-                            request=request,
-                            location=worker_location,
-                            date_time=date_time,
-                            map_data=site_heatmap_map_data,
-                            heatmap_activity_id=site_heatmap_activity_id,
-                            granularity=site_heatmap_granularity,
-                            client=self.client,
-                        )
+                        try:
+                            worker_spatial = analyze_spatial_features(
+                                site_heatmap_map_data,
+                                SpatialHeatRequest(
+                                    location=worker_location,
+                                    timezone_name=request.timezone_name,
+                                    search_radius_meters=request.spatial_search_radius_meters,
+                                    granularity=site_heatmap_granularity or settings.heatshield_live_granularity_meters,
+                                    max_candidates=request.max_spatial_candidates,
+                                    operational_polygon=operational_polygon,
+                                ),
+                                generated_at=now,
+                                activity_id=site_heatmap_activity_id,
+                            )
+                        except Exception:
+                            worker_spatial = unavailable_spatial(request, now, location=worker_location)
                     else:
-                        worker_environment = await get_live_environment(
-                            worker_location,
-                            date_time,
-                            timezone_name=request.timezone_name,
-                            client=self.client,
+                        worker_spatial = unavailable_spatial(
+                            request,
+                            now,
+                            location=worker_location,
+                            reason="No supervisor-approved relocation zone was available for this worker; no spatial candidate was created.",
                         )
-                    worker_environment_fetches += 1
-                    worker_environment = worker_environment.model_copy(update={"raw": {}})
-                except Exception:
-                    worker_environment = EnvironmentalConditions(
-                        location=worker_location.model_dump(),
-                        timestamp=now.isoformat(),
-                    )
-                    limitations.append(
-                        f"Worker {assignment.worker.worker_id} provider evidence was unavailable at the submitted position."
-                    )
+                if worker_spatial is not None:
+                    worker_spatials[worker_id] = worker_spatial
 
-            assessment = assess_risk(
-                worker_environment,
-                assignment.worker,
-                assignment.task,
-                now=now,
-            )
             optimization = None
-            if request.include_shift_optimization and assignment.shift_tasks and outlook is not None:
+            if request.include_shift_optimization and assignment.shift_tasks and worker_outlook is not None:
                 optimization_count += 1
                 try:
                     optimization = optimize_shift(
                         ShiftOptimizationRequest(
-                            worker_id=assignment.worker.worker_id,
-                            heat_outlook=outlook,
+                            worker_id=worker_id,
+                            heat_outlook=worker_outlook,
                             tasks=assignment.shift_tasks,
                         ),
                         now=now,
                     )
                 except Exception:
-                    optimization = unavailable_optimization(assignment.worker.worker_id, now)
+                    optimization = unavailable_optimization(worker_id, now)
 
             group = attention_group(assessment)
             screen = assessment.screening
+            zone = zones.get(assignment.worker.zone_id or "")
             workers.append(
                 SiteWorkerSnapshot(
-                    worker_id=assignment.worker.worker_id,
+                    worker_id=worker_id,
                     display_label=assignment.display_label,
                     position=assignment.position,
                     zone_id=assignment.worker.zone_id,
+                    zone_name=zone.name if zone else assignment.position.label if assignment.position else None,
+                    zone_type=zone.zone_type if zone else None,
+                    spatial_relocation_allowed=assignment.spatial_relocation_allowed,
+                    allowed_zone_ids=assignment.allowed_zone_ids,
                     task_id=assignment.task.task_id,
                     task_name=assignment.task.task_name,
                     workload_level=assignment.task.workload_level,
@@ -430,48 +504,51 @@ class SiteOperationsOrchestrator:
                     attention_group=group,
                     attention_order=ATTENTION_ORDER[group],
                     current_assessment=assessment,
+                    heat_outlook=worker_outlook,
+                    spatial_heat=worker_spatial,
                     shift_optimization=optimization,
                     contextual_flags=screen.contextual_flags if screen else [],
                     recommended_controls=screen.recommended_controls if screen else [],
                     available_agent_capabilities=available_agent_capabilities(
                         assessment,
-                        outlook,
-                        spatial,
+                        worker_outlook,
+                        worker_spatial,
                         optimization,
                     ),
                 )
             )
 
         queue = sorted(workers, key=lambda worker: (worker.attention_order, worker.worker_id))
-        bands = {
-            key: 0
-            for key in (
-                "below_caution",
-                "caution",
-                "extreme_caution",
-                "danger",
-                "extreme_danger",
-                "unavailable",
-            )
-        }
+        bands = {key: 0 for key in ("below_caution", "caution", "extreme_caution", "danger", "extreme_danger", "unavailable")}
         for worker in workers:
             screen = worker.current_assessment.screening
-            band = screen.band if screen and screen.band else "unavailable"
-            bands[band] += 1
+            bands[screen.band if screen and screen.band else "unavailable"] += 1
 
-        candidate_workers = [
-            worker
-            for worker in workers
-            if worker.shift_optimization and worker.shift_optimization.best_candidate
-        ]
+        candidate_workers = [worker for worker in workers if worker.shift_optimization and worker.shift_optimization.best_candidate]
+        outlook_values = [worker.heat_outlook for worker in workers if worker.heat_outlook is not None]
+        spatial_values = [worker.spatial_heat for worker in workers if worker.spatial_heat is not None]
+        forecast_status = (
+            "not_requested" if not request.include_prediction
+            else "available" if outlook_values and all(item.status == "available" for item in outlook_values)
+            else "insufficient_data" if not outlook_values or all(item.status == "insufficient_data" for item in outlook_values)
+            else "partial"
+        )
+        spatial_status = (
+            "not_requested" if not request.include_spatial_intelligence
+            else "available" if any(item.status == "available" for item in spatial_values)
+            else "no_cooler_candidate" if spatial_values and all(item.status == "no_cooler_candidate" for item in spatial_values)
+            else "insufficient_data"
+        )
+        active_work_zones = [zone for zone in request.operational_zones if zone.active and zone.zone_type == SiteZoneType.WORK]
+        active_recovery_zones = [zone for zone in request.operational_zones if zone.active and zone.zone_type == SiteZoneType.RECOVERY]
         summary = SiteOperationsSummary(
             worker_count=len(workers),
             workers_with_precise_location_count=sum(item.position is not None for item in request.assignments),
             site_polygon_feature_count=len(request.site_polygon.features) if request.site_polygon else 0,
-            evidence_gap_count=sum(
-                worker.attention_group == OperationalAttentionGroup.EVIDENCE_GAP
-                for worker in workers
-            ),
+            operational_zone_count=len(request.operational_zones),
+            active_work_zone_count=len(active_work_zones),
+            active_recovery_zone_count=len(active_recovery_zones),
+            evidence_gap_count=sum(worker.attention_group == OperationalAttentionGroup.EVIDENCE_GAP for worker in workers),
             screening_band_counts=bands,
             direct_sun_worker_count=sum(worker.direct_sun for worker in workers),
             non_acclimatized_worker_count=sum(not worker.acclimatized for worker in workers),
@@ -482,33 +559,27 @@ class SiteOperationsOrchestrator:
             ),
             shared_current_temperature_c=environment.temperature_c,
             shared_provider_heat_index_c=environment.heat_index_c,
-            forecast_status=outlook.status if outlook else "not_requested",
-            spatial_status=spatial.status if spatial else "not_requested",
-            cooler_zone_candidate_count=len(spatial.candidates) if spatial else 0,
+            forecast_status=forecast_status,
+            spatial_status=spatial_status,
+            cooler_zone_candidate_count=sum(len(item.candidates) for item in spatial_values),
         )
         optional_partial = (
-            (outlook is not None and outlook.status != "available")
-            or (spatial is not None and spatial.status == "insufficient_data")
-            or any(
-                worker.shift_optimization
-                and worker.shift_optimization.status == "optimizer_unavailable"
-                for worker in workers
-            )
+            forecast_status in {"partial", "insufficient_data"}
+            or spatial_status == "insufficient_data"
+            or any(worker.shift_optimization and worker.shift_optimization.status == "optimizer_unavailable" for worker in workers)
         )
-        current_valid = all(
-            worker.current_assessment.risk_level != "insufficient_data"
-            for worker in workers
-        )
+        current_valid = all(worker.current_assessment.risk_level != "insufficient_data" for worker in workers)
         status = "insufficient_data" if not current_valid else "partial" if optional_partial else "available"
         usage = SiteProviderUsage(
             site_heatmap_requests=site_heatmap_requests,
             current_environment_fetches=center_environment_fetches + worker_environment_fetches,
             worker_environment_fetches=worker_environment_fetches,
-            prediction_heatmap_requests=len(request.forecast_offset_hours) if request.include_prediction else 0,
-            spatial_heatmap_requests=1 if request.include_spatial_intelligence else 0,
+            prediction_heatmap_requests=prediction_heatmap_requests,
+            spatial_heatmap_requests=1 if request.include_spatial_intelligence and not zoned else 0,
             worker_assessment_count=len(workers),
             worker_shift_optimization_count=optimization_count,
         )
+        first_worker = workers[0] if workers else None
         response = SiteOperationsResponse(
             snapshot_id=snapshot_id,
             generated_at=now,
@@ -516,11 +587,12 @@ class SiteOperationsOrchestrator:
             location=request.location,
             timezone_name=request.timezone_name,
             site_polygon=request.site_polygon,
+            operational_zones=request.operational_zones,
             site_heatmap_activity_id=site_heatmap_activity_id,
             site_heatmap_granularity=site_heatmap_granularity,
             shared_environment=environment,
-            heat_outlook=outlook,
-            spatial_heat=spatial,
+            heat_outlook=first_worker.heat_outlook if first_worker else legacy_outlook,
+            spatial_heat=first_worker.spatial_heat if first_worker else legacy_spatial,
             workers=workers,
             attention_queue=[worker.worker_id for worker in queue],
             summary=summary,
@@ -530,10 +602,7 @@ class SiteOperationsOrchestrator:
         self.store.save_site_snapshot(
             snapshot_id,
             now.isoformat(),
-            {
-                "request": request.model_dump(mode="json"),
-                "response": response.model_dump(mode="json"),
-            },
+            {"request": request.model_dump(mode="json"), "response": response.model_dump(mode="json")},
         )
         self.store.add_audit(
             snapshot_id,
@@ -543,6 +612,8 @@ class SiteOperationsOrchestrator:
                 "provider_usage": usage.model_dump(),
                 "status": status,
                 "site_heatmap_activity_id": site_heatmap_activity_id,
+                "operational_zone_count": len(request.operational_zones),
+                "shared_forecast_maps": zoned,
             },
         )
         return response
@@ -554,10 +625,7 @@ class SiteOperationsOrchestrator:
         response = SiteOperationsResponse.model_validate(stored["response"])
         current = self.clock()
         current = current.replace(tzinfo=UTC) if current.tzinfo is None else current.astimezone(UTC)
-        response.age_seconds = max(
-            0.0,
-            (current - response.generated_at.astimezone(UTC)).total_seconds(),
-        )
+        response.age_seconds = max(0.0, (current - response.generated_at.astimezone(UTC)).total_seconds())
         statement = "Stored site snapshots are historical views and are not refreshed by GET."
         if statement not in response.limitations:
             response.limitations.append(statement)
@@ -569,21 +637,12 @@ class SiteOperationsOrchestrator:
             raise KeyError("Site snapshot not found")
         request = SiteOperationsRequest.model_validate(stored["request"])
         assignment: SiteWorkerAssignment | None = next(
-            (
-                item
-                for item in request.assignments
-                if item.worker.worker_id == worker_id
-            ),
+            (item for item in request.assignments if item.worker.worker_id == worker_id),
             None,
         )
         if assignment is None:
             raise KeyError("Worker not found in site snapshot")
-
-        worker_location = location_for_position(
-            request.location,
-            assignment.position,
-            worker_id=assignment.worker.worker_id,
-        )
+        worker_location = location_for_position(request.location, assignment.position, worker_id=assignment.worker.worker_id)
         cycle = HeatShieldCycleRequest(
             location=worker_location,
             timezone_name=request.timezone_name,
@@ -591,8 +650,9 @@ class SiteOperationsOrchestrator:
             worker=assignment.worker,
             task=assignment.task,
             forecast_offset_hours=request.forecast_offset_hours,
-            include_spatial_intelligence=request.include_spatial_intelligence,
+            include_spatial_intelligence=request.include_spatial_intelligence and assignment.spatial_relocation_allowed,
             spatial_search_radius_meters=request.spatial_search_radius_meters,
+            operational_polygon=candidate_polygon_for_assignment(request, assignment),
             include_shift_optimization=request.include_shift_optimization and bool(assignment.shift_tasks),
             shift_tasks=assignment.shift_tasks,
         )
@@ -601,7 +661,8 @@ class SiteOperationsOrchestrator:
             worker_id=worker_id,
             cycle_request=cycle,
             limitations=[
-                "This helper does not run a cycle or reuse snapshot environmental evidence.",
-                "Submitting this request to /api/cycle/plan performs fresh provider fetches at the worker position.",
+                "This helper does not run a cycle or reuse snapshot evidence by itself.",
+                "Submitting this helper directly to /api/cycle/plan performs fresh provider fetches at the worker position.",
+                "The site agent-plan endpoint may reuse a just-created snapshot for lower latency; VERIFY always obtains fresh provider evidence.",
             ],
         )
